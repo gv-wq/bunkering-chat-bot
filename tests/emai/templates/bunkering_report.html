@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bunkering Report</title>
+<style>
+body { font-family: Arial, sans-serif; margin: 0; padding: 0; background: #edf2f7; }
+.container { max-width: 800px; margin: 20px auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+.image-container { margin: 20px 0; text-align: center; }
+.image-container img { max-width: 100%; border-radius: 6px; box-shadow: 0 2px 6px rgba(0,0,0,0.15); }
+table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 14px; }
+th, td { border: 1px solid #cbd5e0; padding: 10px 15px; text-align: left; vertical-align: top; }
+th { background: #2d3748; color: white; font-weight: 600; }
+tr:nth-child(even) { background: #f7fafc; }
+tr:hover { background: #ebf8ff; }
+.fuel-summary { background: #f0fff4; padding: 20px; border-radius: 5px; border-left: 4px solid #38a169; }
+.fuel-item { margin: 10px 0; padding: 8px 12px; background: white; border-radius: 4px; border-left: 3px solid #4299e1; }
+</style>
+</head>
+<body>
+<div class="container">
+
+    <!-- Header -->
+    <div style="text-align:center; margin-bottom:30px; padding-bottom:20px; border-bottom:1px solid #e2e8f0;">
+        <h1 style="color: #1a365d; margin:0;">⚓ Route & Bunkering Report</h1>
+        <p style="color: #718096; margin-top:5px; font-size:14px;">Official Summary | Generated on {{ generation_date }}</p>
+    </div>
+
+    <!-- Map Images -->
+    {% for img in images %}
+    <div class="image-container">
+        <img src="data:image/png;base64,{{ img }}" />
+    </div>
+    {% endfor %}
+
+
+    <div class="url-wrapper" style="margin: 20px 0; text-align: center;">
+    <a href="{{ overview.map_link }}" target="_blank"
+       style="display: inline-flex; align-items: center; justify-content: center; padding: 12px 28px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 15px; box-shadow: 0 4px 6px rgba(50, 50, 93, 0.11), 0 1px 3px rgba(0, 0, 0, 0.08); transition: all 0.2s; gap: 8px;">
+        <span style="font-size: 18px;">🌍</span>
+        <span>Open Interactive Route Map</span>
+        <span style="font-size: 18px;">↗</span>
+    </a>
+    <div style="margin-top: 8px; font-size: 12px; color: #718096;">
+        Click to view voyage visualization
+    </div>
+</div>
+
+
+<div style="
+    display: flex;
+    flex-direction: row;
+    gap: 20px;
+    margin-bottom: 25px;
+">
+
+    <!-- CUSTOMER TABLE -->
+    <table style="width: 50%;">
+        <thead>
+            <tr>
+                <th colspan="2">Customer Information</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% if overview.user.company_name %}
+            <tr>
+                <td><strong>Company</strong></td>
+                <td>{{ overview.user.company_name }}</td>
+            </tr>
+            {% endif %}
+
+            {% if overview.user.first_name or overview.user.last_name %}
+            <tr>
+                <td><strong>Contact</strong></td>
+                <td>{{ overview.user.first_name or "" }} {{ overview.user.last_name or "" }}</td>
+            </tr>
+            {% endif %}
+
+            {% if overview.user.email %}
+            <tr>
+                <td><strong>Email</strong></td>
+                <td>{{ overview.user.email }}</td>
+            </tr>
+            {% endif %}
+
+            {% if overview.user.phone_number %}
+            <tr>
+                <td><strong>Phone</strong></td>
+                <td>{{ overview.user.phone_number }}</td>
+            </tr>
+            {% endif %}
+        </tbody>
+    </table>
+
+    <!-- VOYAGE TABLE -->
+    <table style="width: 50%;">
+        <thead>
+            <tr>
+                <th colspan="2">Voyage Overview</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% if overview.departure %}
+            <tr>
+                <td><strong>Departure</strong></td>
+                <td>{{ overview.departure }}</td>
+            </tr>
+            {% endif %}
+
+            {% if overview.destination %}
+            <tr>
+                <td><strong>Destination</strong></td>
+                <td>{{ overview.destination }}</td>
+            </tr>
+            {% endif %}
+
+            {% if overview.departure_date %}
+            <tr>
+                <td><strong>Departure date</strong></td>
+                <td>{{ overview.departure_date.strftime("%d %B %Y") }}</td>
+            </tr>
+            {% endif %}
+
+            {% if overview.average_speed %}
+            <tr>
+                <td><strong>Average speed</strong></td>
+                <td>{{ overview.average_speed }} knots</td>
+            </tr>
+            {% endif %}
+
+            {% if overview.vessel_name %}
+            <tr>
+                <td><strong>Vessel</strong></td>
+                <td>{{ overview.vessel_name }}</td>
+            </tr>
+            {% endif %}
+
+            {% if overview.imo_number %}
+            <tr>
+                <td><strong>IMO</strong></td>
+                <td>{{ overview.imo_number }}</td>
+            </tr>
+            {% endif %}
+        </tbody>
+    </table>
+
+</div>
+
+
+    <!-- Fuel Table -->
+    <table>
+        <thead>
+            <tr>
+                {% for col in table_columns %}
+                <th>{{ col }}</th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in table_rows %}
+            <tr>
+                {% for col in table_columns %}
+                <td>{{ row[col] }}</td>
+                {% endfor %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <!-- Cost Summary -->
+    <div class="fuel-summary">
+        <div style="font-size:18px; font-weight:bold; margin-bottom:15px;">Total Estimated Cost: ${{ "{:,.0f}".format(total_cost) }}</div>
+        {% for fuel, t in fuel_totals.items() %}
+            <div class="fuel-item">
+                <strong>{{ fuel }}:</strong> {{ t.qty }} mt —
+                {% if t.cost %}<span style="color:#38a169; font-weight:600;">${{ "{:,.0f}".format(t.cost) }}</span>{% else %}<span style="color:#a0aec0; font-style:italic;">$0 (on request)</span>{% endif %}
+            </div>
+        {% endfor %}
+    </div>
+
+    <!-- Footer -->
+    <div style="margin-top:40px; padding-top:20px; border-top:1px solid #e2e8f0; text-align:center; font-size:12px; color:#a0aec0;">
+        <p>This report is generated automatically. For questions, please contact the operations team.</p>
+        <p>© {{ generation_date.split(" ")[-1] }} Bunkering Operations. All rights reserved.</p>
+    </div>
+
+</div>
+</body>
+</html>

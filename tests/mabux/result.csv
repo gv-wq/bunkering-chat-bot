@@ -1,0 +1,387 @@
+Mabux ID,Port name,Country,Mabux locode,Real locodes
+539,A Coruna,Spain,ESLCG,ESLCG
+315,Aberdeen,United Kingdom,GBABD,GBABD
+259,Abidjan (off),Ivory Coast,CIABJ,CIABJ
+448,Abidjan (port),Ivory Coast,CIABI,CIABJ
+261,Aden,Yemen,YEADE,YEADE
+277,Ain Sukhna,Egypt,EGSUZ,EGAIS
+180,Alexandria,Egypt,EGALY,EGALY
+174,Algeciras,Spain,ESALG,ESALG
+256,Algiers,Algeria,DZALG,DZALG
+360,Altamira,Mexico,MXALT,MXATM
+104,Amsterdam,Netherlands,NLAMS,NLAMS
+533,Ancona,Italy,ITAOI,ITAOI
+215,Antofagasta,Chile,CLANF,CLANF
+105,Antwerpen,Belgium,BEANR,BEANR
+266,Aqaba,Jordan,JOAQJ,JOAQJ
+435,Arica,Chile,CLARI,CLARI
+70,Arkhangelsk,Russian Federation (Europe),RUARH,RUARH
+426,Aruba (off),Netherlands Antilles,AWAUA,AWAUA
+87,Ashdod,Israel,ILASD,ILASH
+513,Astrakhan,Russian Federation (Europe),RUASK,RUASF
+239,Auckland,New Zealand,NZAKL,NZAKL
+120,Augusta,Italy,ITAUG,ITAUG
+467,Azov,Russian Federation (Europe),RUAZO,RUAZO
+56,Bahia Blanca Port,Argentina,ARBHA,ARBHI
+544,Bahia Blanca roads buoy 11,Argentina,ARBHA,ARBHI
+543,Bahia Blanca roads buoy 17,Argentina,ARBHA,ARBHI
+137,Bahrain,Bahrain,BHBAH,BHBAH
+510,Baku,Azerbaijan,AZBAK,AZBAK
+619,Balchick,Bulgaria,BGBCZ,BGVAR
+168,Balikpapan,Indonesia,IDBPN,IDBPN
+333,Baltiysk (off),Russian Federation (Europe),RUBLT,RUBLT
+283,Bandar Abbas,"Iran, Islamic Republic of",IRBND,IRBND
+396,Bandar Imam Khomeini,"Iran, Islamic Republic of",IRBIK,IRBIK
+142,Bangkok,Thailand,THBKK,THBKK
+245,Barcelona,Spain,ESBCN,ESBCN
+671,Batsfjord,Norway,NOBJF,NOBJF
+325,Batumi,Georgia,GEBUS,GEBUS
+226,Belem,Brazil,BRBEL,BRBEL
+253,Belfast,United Kingdom,GBBEL,GBBEL
+10,Bergen,Norway,NOBGO,NOBGO
+299,Bin Quasim,Pakistan,PKBQM,PKBQM
+395,Bonaire,Netherlands Antilles,BQBON,BQBON
+295,Botany Bay,Australia,AUBNE,AUSYD
+531,Boulogne-sur-Mer,France,FRXBS,FRBOL
+72,Bourgas,Bulgaria,BGBOJ,BGBOJ
+195,Bremerhaven,Germany,DEBRE,DEBRE
+653,Bridgetown,Barbados,BBBGI,BBBGI
+231,Brisbane,Australia,AUBNE,AUBNE
+345,Broome,Australia,AUBME,AUBME
+23,Buenos Aires,Argentina,ARBUE,ARBUE
+27,Busan,"Korea, Republic of",KRPUS,KRPUS
+342,Cairns,Australia,AUCNS,AUCNS
+202,Callao,Peru,PECAL,PECLL
+26,Cape Town,South Africa,ZACPT,ZACPT
+134,Cartagena,Colombia,COCTG,COCTG
+403,Casablanca,Morocco,MACAS,MACAS
+316,Cebu,Philippines,PHCEB,PHCEB
+61,Ceuta,Spain,ESCEU,ESCEU
+372,Charleston,United States,USCHS,USCHS
+337,Chennai,India,INMAA,INMAA
+453,Chittagong,Bangladesh,BDCGP,BDCGP
+363,Coatzacoalcos,Mexico,MXCOA,MXCOA
+206,Colombo,Sri Lanka,LKCMB,LKCMB
+164,Constanza,Romania,ROCND,ROCND
+6,Copenhagen,Denmark,DKCPH,DKCPH
+214,Coronel,Chile,CLCRO,CLCNL
+280,Corpus Christi,United States,USCRP,USCRP
+94,Cotonou (off),Benin,BJCOO,BJCOO
+237,Curacao,Netherlands Antilles,CWCUR,CWCUR
+532,Cuxhaven,Germany,DECUX,DECUX
+92,Dakar (off),Senegal,SNDKR,SNDKR
+439,Dakar (port),Senegal,SNDKR,SNDKR
+145,Dalian,China,CNDLC,CNDLC
+136,Dammam,Saudi Arabia,SADAM,SADMM
+343,Dampier,Australia,AUDAM,AUDAM
+624,Darlowo,Poland,PLDAR,PLDAR
+309,Darwin,Australia,AUDRW,AUDRW
+178,Donges,France,FRXDG,FRNTE
+139,Dubai,United Arab Emirates,AEDXB,AEDXB
+155,Dunkirk,France,FRXDK,FRDKK
+25,Durban,South Africa,ZADUR,ZADUR
+244,Emden,Germany,DEEME,DEEME
+252,Esmeraldas,Ecuador,ECESM,ECESM
+4,Falmouth,United Kingdom,GBFAL,GBFAL
+210,Fortaleza,Brazil,BRFOR,BRFOR
+177,Fos,France,FRFOS,FRFOS
+255,Freeport,Bahamas,BSFPO,BSFPO
+213,Fremantle,Australia,AUFRE,AUFRE
+130,Fuglefjord,Faroe Islands,FOFUG,FOFUG
+3,Fujairah,United Arab Emirates,AEFJR,AEFJR
+374,Galatz,Romania,ROGAZ,ROGAL
+335,Galle,Sri Lanka,LKGAL,LKGAL
+641,Gavle,Sweden,SEGVX,SEGVX
+30,Gdansk,Poland,PLGDN,PLGDN
+75,Gdynia,Poland,PLGDY,PLGDY
+308,Geelong,Australia,AUGEX,AUGEX
+118,Genoa,Italy,ITGOA,ITGOA
+667,Geraldton,Australia,AUGET,AUGET
+13,Gibraltar,Gibraltar,GIGIB,GIGIB
+230,Gladstone,Australia,AUGLT,AUGLT
+665,Glasgow,United Kingdom,GBGLA,GBGLA
+7,Gothenburg,Sweden,SEGSE,SEGOT
+5,Great Belt,Denmark,DK---,DKNBG
+540,Grimsby,United Kingdom,GBGSY,GBGSY
+278,Guangzhou (Huangpu),China,CNCAN,CNCAN
+200,Guayaquil,Ecuador,ECGYE,ECGYE
+152,Hai Phong,Vietnam,VNHPH,VNHPH
+86,Haifa,Israel,ILHFA,ILHFA
+111,Halifax,Canada,CAHAL,CAHAL
+663,Halmstad,Sweden,SEHAD,SEHAD
+28,Hamburg,Germany,DEHAM,DEHAM
+526,Hammerfest,Norway,NOHFT,NOHFT
+530,Hanstholm,Denmark,DKHDM,DKHIR
+625,Hel,Poland,PLHEL,PLHEL
+662,Helsingborg,Sweden,SEHEL,SEHEL
+88,Helsinki,Finland,FIHEL,FIHEL
+529,Hirtshals,Denmark,DKHIR,DKHIR
+90,Ho Chi Minh,Vietnam,VNSGN,VNSGN
+181,Holmsk,Russian Federation (Far east),RUHOM,RUKHO
+657,Holmsund,Sweden,SEHLD,SEHLD
+113,Hong Kong,China,HKHKG,HKHKG
+8,Honningsvaag,Norway,NOHVG,NOHVG
+20,Houston,United States,USHOU,USHOU
+286,Hualien,Taiwan,TWHUN,TWHUN
+220,Huasco,Chile,CLHUA,CLHSO
+535,Ijmuiden,Netherlands,NLIJM,NLIJM
+263,Ilyichevsk,Ukraine,UAILY,CAODE
+262,Incheon,"Korea, Republic of",KRINC,KRINC
+442,Iquique (XB),Chile,CLIQQ,CLIQQ
+216,Iquique (XP),Chile,CLIQQ,CLIQQ
+16,Istanbul,Turkey,TRIST,TRIST
+528,Itaqui (XB),Brazil,BRITQ,BRITQ
+297,Itaqui (XP),Brazil,BRITQ,BRITQ
+635,Izmir,Turkey,TRIZM,TRIZM
+279,Jacksonville,United States,USJAX,USJAX
+165,Jakarta,Indonesia,IDJKT,IDJKT
+318,Jebel Ali,United Arab Emirates,AEJEA,AEJEA
+116,Jeddah,Saudi Arabia,SAJED,SAJED
+357,Jureles,Chile,CLJUR,CLJRL
+151,Kali Limenes,Greece,GRKAL,GRKAL
+106,Kaliningrad,Russian Federation (Europe),RUKGD,RUKGD
+659,Kalmar,Sweden,SEKLR,SEKLR
+298,Kandla,India,INIXY,INIXY
+131,Kaohsiung,Taiwan,TWKHH,TWKHH
+229,Karachi,Pakistan,PKKHI,PKKHI
+660,Karlshamn,Sweden,SEKAN,SEKAN
+144,Keelung,Taiwan,TWKEEL,TWKEL
+274,Kerch,Russian Federation (Europe),RUKHC,RUNVS
+520,Kerch (XB),Russian Federation (Europe),RUKHC,RUNVS
+468,Kherson/Nikolaev(BT),Ukraine,UAKHE,UAKHE
+508,Kherson/Nikolaev(XB),Ukraine,UAKHE,UAKHE
+127,Kiel,Germany,DEKEL,DEKEL
+669,Kiel Canal,Germany,DECKL,DECKL
+201,Kingston,Jamaica,JMKIN,JMKIN
+632,Kirkenes,Norway,NOKKN,NOKKN
+54,Klaipeda,Lithuania,LTKLP,LTKLJ
+623,Kolobrzeg,Poland,PLKOL,PLKOL
+275,Koper,Slovenia,SIKOP,SIKOP
+302,Korsakov,Russian Federation (Far east),RUKOR,RUKOR
+160,Kosichang,Thailand,THKOS,THKSI
+153,Kotka,Finland,FIKTK,FIKTK
+455,Kozmino,Russian Federation (Far east),RUKOZ,RUKOZ
+376,Kulevi,Georgia,GEKUL,GEKUL
+138,Kuwait,Kuwait,KWKWI,KWKWI
+613,Kwinana,Australia,AUKWI,AUKWI
+248,La Libertad,Ecuador,ECLLD,ECLLD
+269,La Spezia,Italy,ITSPE,ITSPE
+260,Lagos (off),Nigeria,NGLAG,NGLOS
+257,Lagos (port),Nigeria,NGLOS,NGLOS
+24,Las Palmas,Spain,ESLPA,ESLPA
+107,Le Havre,France,FRLEH,FRLEH
+85,Liepaja,Latvia,LVLPX,LVLPX
+73,Limassol,Cyprus,CYLCA,CYLCA
+452,Limassol (off),Cyprus,CYLCA,CYLCA
+217,Lirquen,Chile,CLLIR,CLLQN
+41,Lisbon,Portugal,PTLIS,PTLIS
+157,Livorno,Italy,ITLIV,ITLIV
+398,Lom,Bulgaria,BGLOM,BGLOM
+434,Lome (off),Togo,TGLFW,TGLFW
+240,Long Beach,United States,USLBH,USLBH
+429,Longyearbyen(XB),Norway,SJLYR,SJLYR
+430,Longyearbyen(XP),Norway,SJLYR,SJLYR
+541,Lorient,France,FRLRT,FRLRT
+110,Los Angeles,United States,USLAX,USLAX
+267,Luanda (off),Angola,AOLAD,AOLAD
+388,Luanda (port),Angola,AOLAD,AOLAD
+125,Lubeck,Germany,DELBC,DELBC
+655,Lulea,Sweden,SELLA,SELLA
+670,Maceio,Brazil,BRMCZ,BRMCZ
+661,Malmo,Sweden,SEMMX,SEMMA
+14,Malta (off),Malta,MTMLA,MTMLA
+289,Manaus,Brazil,BRMAO,BRMAO
+246,Manila,Philippines,PHMNL,PHMNL
+249,Manta,Ecuador,ECMEC,ECMEC
+366,Manzanillo,Mexico,MXZLO,MXZLO
+379,Maputo,Mozambique,MZMPM,MZMPM
+538,Marin,Spain,ESMAR,ESMPG
+307,Marsden Point,Australia,AUMPT,AUADL
+154,Marseilles,France,FRMRS,FRMRS
+219,Mejillones,Chile,CLMEJ,CLMJS
+212,Melbourne,Australia,AUMEL,AUMEL
+332,Miami,United States,USMIA,USMIA
+654,Mindelo,Cape Verde,CVMTI,CVMIN
+265,Mobile,United States,USMOB,USMOB
+34,Montevideo (AZ),Uruguay,UYMVD,UYMVD
+33,Montevideo (port),Uruguay,UYMVD,UYMVD
+548,Montevideo (SZ),Uruguay,UYMVD,UYMVD
+18,Montreal,Canada,CAYUL,CAMTR
+284,Mumbai,India,INBOM,INBOM
+391,Mundra,India,INMUN,INMUN
+135,Murmansk,Russian Federation (Europe),RUMMK,RUMMK
+141,Muuga,Estonia,EEMUU,EEMUG
+80,Nakhodka,Russian Federation (Far east),RUNAK,RUNJK
+158,Naples,Italy,ITNAP,ITNAP
+241,New Orleans,United States,USMSY,USMSY
+109,New York,United States,USNYC,USNYC
+612,Newcastle,Australia,AUNTL,AUNTL
+351,Ningbo,China,CNNGB,CNNGB
+290,Niteroi,Brazil,BRNIT,BRFNO
+232,Norfolk,United States,USORF,USORF
+640,Norrkoping,Sweden,SENRK,SENRK
+621,Northport,New Zealand,NZNPO,NZBLU
+444,Noumea (France),New Caledonia,NCNOU,NCNOU
+31,Novorossiysk,Russian Federation (Europe),RUNVR,RUNVS
+637,Nynashamn,Sweden,SENYN,SENYN
+32,Odessa,Ukraine,UAODS,UAODS
+454,Osaka,Japan,JPOSA,JPOSA
+638,Oskarshamn,Sweden,SEOSK,SEOSK
+639,Oxelosund,Sweden,SEOXE,SEOXE
+615,Paldiski,Estonia,EEPDV,EEPDV
+21,Panama Canal,Panama,PAPCN,PAPCN
+236,Papeete,French Polynesia,PFPKP,PFPKP
+204,Paramaribo,Suriname,SRPBM,SRPBM
+205,Paranagua,Brazil,BRPNG,BRPNG
+355,Patache(BT),Chile,CLPTC,CLPTC
+440,Patache(XB),Chile,CLPTC,CLPTC
+354,Patillos(BT),Chile,CLPTL,CLPTI
+441,Patillos(XB),Chile,CLPTL,CLPTI
+401,Patra,Greece,GRPAT,CLPTI
+288,Penang,Malaysia,MYPEN,MYPEN
+460,Petropavlovsk-Kamchatsky,Russian Federation (Far east),RUPKC,RUPKC
+112,Philadelphia,United States,USPHL,USPHL
+370,Pichilingue (La Paz),Mexico,MXPPE,MXPPE
+15,Pireaus,Greece,GRPIR,GRPIR
+656,Pitea,Sweden,SEPIT,SEPIT
+433,Pointe-Noire (off),Congo,CGPNR,CGPNR
+143,Police,Poland,PLPOL,PLSZZ
+546,Pori,Finland,FIPOR,FIPOR
+645,Port Elizabeth,South Africa,ZAPLZ,ZAPLZ
+258,Port Gentil,Gabon,GAPOG,GAPOG
+296,Port Kembla,Australia,AUPTK,AUPKL
+189,Port Klang,Malaysia,MYPKG,MYPKG
+176,Port Louis Commercial Harbour,Mauritius,MUPLU,MUPLU
+173,Port Louis Fishing Harbour,Mauritius,MUPLU,MUPLU
+393,Port Morseby,Papua New Guinea,PGPMB,PGPOM
+129,Port Said,Egypt,EGPSD,EGPSD
+235,Port Stanley,Falkland Islands,FKPSY,FKPSY
+551,Port Sudan,Sudan,SDPZU,SDPZU
+197,Portland,United States,USPWM,USPWM
+328,Portland (UK),United Kingdom,GBPTL,GBPTL
+666,Porvoo,Finland,FIPBV,FIPBV
+326,Poti,Georgia,GEPTI,GEPTI
+281,Primorsk,Russian Federation (Europe),RUPRI,RUPRI
+356,Puchoco,Chile,CLPCH,CLPCH
+250,Puerto Bolivar,Ecuador,ECPBO,ECPBO
+451,Puerto Limon,Costa Rica,CRLIO,CRLIO
+225,Punta Arenas,Chile,CLPUQ,CLPUQ
+247,Punta Quilla,Argentina,ARPUQ,ARCVI
+146,Qingdao,China,CNTAO,CNTAO
+465,Quebec,Canada,CAYQB,CAQUE
+222,Quintero,Chile,CLQUI,CLQTV
+238,Ras Tanura,Saudi Arabia,SARTN,SADMM
+545,Rauma,Finland,FIRAU,FIRAU
+191,Ravenna,Italy,ITRAV,ITRAN
+208,Recife,Brazil,BRREC,BRREC
+462,Reydarfjordur,Iceland,ISRFJ,ISRFJ
+58,Reykjavik,Iceland,ISREY,ISREY
+65,Richards Bay,South Africa,ZARCB,ZARCB
+29,Riga,Latvia,LVRIX,LVRIX
+161,Rijeka,Croatia,HRRIJ,HRRJK
+128,Rio de Janeiro,Brazil,BRRJO,BRRIO
+207,Rio Grande,Brazil,BRRIG,BRRIG
+251,Rio Guayas,Ecuador,ECGYE,ECGYE
+38,Rosario,Argentina,ARROS,ARROS
+352,Rostock,Germany,DERLG,DERSK
+353,Rostock roads,Germany,DERSK,DERSK
+516,Rostov-on-Don,Russian Federation (Europe),RURND,RURND
+1,Rotterdam,Netherlands,NLRTM,NLRTM
+209,Salvador,Brazil,BRSSA,BRSSA
+221,San Antonio,Chile,CLSAI,CLSAI
+117,San Francisco,United States,USSFO,USSFO
+449,San Juan,Puerto Rico,PRSJU,PRSJU
+37,San Lorenzo,Argentina,ARSLO,ARSLO
+399,San Nicolas,Argentina,ARSNA,ARSNS
+223,San Vicente,Chile,CLSVC,CLCAP
+22,Santos,Brazil,BRSTS,BRSTS
+373,Savannah,United States,USSAV,USSAV
+140,Seattle,United States,USSEA,USSEA
+512,Sebastopol,Russian Federation (Europe),RUSEV,UASVP
+115,Shanghai,China,CNSHA,CNSHA
+44,Sines,Portugal,PTSIE,PTSIE
+2,Singapore,Singapore,SGSIN,SGSIN
+273,Skaw Roads,Denmark,DKSKW,SEGOT
+622,Sodertalje,Sweden,SESOD,SESOE
+664,Southampton,United Kingdom,GBSOU,GBSOU
+456,Sovgavan,Russian Federation (Far east),RUSOV,RUSOV
+233,St. Eustatius,Netherlands Antilles,BQEUX,BQEUX
+11,St. Petersburg,Russian Federation (Europe),RULED,RULED
+618,Stockholm,Sweden,SESTO,SESTO
+287,Suao,Taiwan,TWSUA,TWSUO
+76,Suape(XB),Brazil,BRSUA,BRSUA
+292,Suape(XP),Brazil,BRSUA,BRSUA
+17,Suez,Egypt,EGSUZ,EGSUZ
+658,Sundsvall,Sweden,SESDL,SESDL
+446,Supsa,Georgia,GESUI,GESUI
+166,Surabaya,Indonesia,IDSUB,IDSUB
+392,Suva,Fiji,FJSUV,FJSUV
+386,Swinoujscie,Poland,PLSWI,PLSWI
+211,Sydney,Australia,AUSYD,AUSYD
+507,Syros Island,Greece,GRJSY,GRJSY
+74,Szczecin,Poland,PLSZZ,PLSZZ
+469,Taganrog,Russian Federation (Europe),RUTAG,RUTAG
+285,Taichung,Taiwan,TWTXG,TWTXG
+473,Takoradi (off),Ghana,GHTKD,GHTKD
+327,Takoradi (port),Ghana,GHTKD,GHTKD
+224,Talcahuano,Chile,CLTAL,CLTAL
+12,Tallinn,Estonia,EETLL,EETLL
+515,Taman,Russian Federation (Europe),RUTAM,RUTAM
+341,Tampa,United States,USTPA,USTPA
+359,Tampico,Mexico,MXTAM,MXTAM
+428,Tanger,Morocco,MATNG,MATNG
+190,Taranto,Italy,ITTAR,ITTAR
+346,Tauranga,New Zealand,NZTRG,NZTRG
+472,Tema (off),Ghana,GHTEM,GHTEM
+331,Tema (port),Ghana,GHTMA,GHTEM
+102,Tenerife,Spain,ESTCI,ESSCT
+390,Tianjin,China,CNTSN,CNTSN
+218,Tocopilla,Chile,CLTCO,CLTOQ
+114,Tokyo,Japan,JPTYO,JPTYO
+371,Topolobampo,Mexico,MXTPB,MXTPB
+62,Torshavn,Faroe Islands,FOTHO,FOTHO
+310,Townsville,Australia,AUTSV,AUTSV
+525,Travemunde,Germany,DETRV,DETRV
+162,Trieste,Italy,ITTRS,ITTRS
+334,Trincomalee,Sri Lanka,LKTRR,LKTRR
+432,Trinidad (off),Trinidad and Tobago,TT---,TTPOS
+9,Tromsoe,Norway,NOTOS,NOTOS
+79,Tuapse,Russian Federation (Europe),RUTUA,RUTUA
+228,Tubarao,Brazil,BRTUB,BRTUB
+321,Turku,Finland,FITKU,FITKU
+361,Tuxpan,Mexico,MXTUX,MXTUX
+431,Tyne,United Kingdom,GBMME,GBNCL
+609,Uglegorsk,Russian Federation (Far east),RUUGL,RUUGL
+324,Ulsan,"Korea, Republic of",KRUSN,KRUSN
+234,Ushuaia,Argentina,ARUSH,ARUSH
+397,Ust-Luga,Russian Federation (Europe),RUULA,RUULA
+322,Valencia,Spain,ESVLC,ESVLC
+471,Vallarta,Mexico,MXPVR,MXPVR
+126,Valparaiso,Chile,CLVAL,CLVAP
+196,Vancouver,Canada,CAYVR,CAVAN
+71,Varna,Bulgaria,BGVAR,BGVAR
+642,Vasteras,Sweden,SEVST,SEVST
+271,Venezuelan Ports,Venezuela,VE---,VEBLA
+163,Venice,Italy,ITVCE,ITVCE
+108,Ventspils,Latvia,LVVNT,LVVNT
+362,Veracruz,Mexico,MXVER,MXVER
+438,Vidin,Bulgaria,BGVID,BGVID
+537,Vigo,Spain,ESVGO,ESVGO
+293,Vila do Conde,Brazil,BRVDC,BRVDC
+294,Vitoria,Brazil,BRVIX,BRVIX
+81,Vladivostok,Russian Federation (Far east),RUVVO,RUVVO
+534,Vlissingen,Netherlands,NLVLI,NLVLI
+389,Vukovar,Croatia,HRVUK,HRVUK
+124,Vysotsk,Russian Federation (Europe),RUVYS,RUVYS
+89,Walvis Bay,Namibia,NAWVB,NAWVB
+668,Wellington,New Zealand,NZWLG,NZWLG
+614,Whangarei,New Zealand,NZWRE,NZWRE
+243,Wilhelmshaven,Germany,DEWHV,DEWVN
+377,Wilmington,United States,USILM,USILM
+301,Yosu,"Korea, Republic of",KRYOS,KRYOS
+77,Yuzhniy,Ukraine,UAIZN,UAODS
+400,Zarate (Campana),Argentina,ARZCB,ARZAE
+464,Zarubino/Slavyanka/Posiet,Russian Federation (Far east),RUZAR,RUZAR
+527,Zeebrugge,Belgium,BEZEE,BEZEE
+644,Zhoushan,China,CNZOS,CNZOS
+123,Zona Comun,Argentina,ARZLC,ARMDQ

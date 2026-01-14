@@ -1,0 +1,22 @@
+[tool.ruff]
+# Target Python version
+target-version = "py313"
+
+# Exclude certain directories
+exclude = ["tests", ".venv", "build", "dist", "services_old"]
+
+# Rules to enable (you can also just use "all = true" and then ignore rules you don't want)
+select = ["F", "E", "W", "I"]  # F=pyflakes, E/W=pycodestyle, I=isort
+
+# Automatically fix certain issues
+fixable = ["I001", "F401", "F841"]  # F401=unused imports, F841=unused variables, I001=isort import order
+
+# Ignore specific rules if needed
+ignore = ["E501"]  # example: line length
+
+[tool.isort]
+profile = "black"
+line_length = 200
+known_first_party = ["app"]
+known_third_party = ["fastapi", "pydantic"]  # etc.
+skip = ["tests", ".venv", "services_old"]

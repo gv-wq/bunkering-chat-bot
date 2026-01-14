@@ -1,0 +1,532 @@
+{
+    "type": "FeatureCollection",
+    "features": [
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1767691521109,
+                "value": "",
+                "distance": 0,
+                "type": "VOYAGE",
+                "class": "ENTRY"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    30.24158477783203,
+                    59.91613926354685
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1767758693630,
+                "value": "East Gotland",
+                "distance": 783673,
+                "type": "ROUTING",
+                "class": "ENTRY"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    19.453293432406813,
+                    57.07542062094437
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1767761380966,
+                "value": "East Gotland",
+                "distance": 815025,
+                "type": "ROUTING",
+                "class": "EXIT"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    19.216707990465284,
+                    56.82531854178846
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1767765142225,
+                "value": "East Oland",
+                "distance": 858906,
+                "type": "ROUTING",
+                "class": "ENTRY"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    18.869878701803625,
+                    56.48087146788975
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1767768386880,
+                "value": "East Oland",
+                "distance": 896760,
+                "type": "ROUTING",
+                "class": "EXIT"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    18.454151875267893,
+                    56.24714770416525
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1767789982256,
+                "value": "North Bornholm",
+                "distance": 1148704,
+                "type": "ROUTING",
+                "class": "ENTRY"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    14.727295671605233,
+                    55.47108716691726
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1767792229874,
+                "value": "North Bornholm",
+                "distance": 1174926,
+                "type": "ROUTING",
+                "class": "EXIT"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    14.421368175161707,
+                    55.316910045126555
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1767820237246,
+                "value": "Kiel Canal",
+                "distance": 1501676,
+                "type": "ROUTING",
+                "class": "ENTRY"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    10.146070734107305,
+                    54.365419008143974
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1767824948227,
+                "value": "North Sea SECA",
+                "distance": 1556637,
+                "type": "SECA",
+                "class": "ENTRY"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    9.48342603814029,
+                    54.182023385689
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1767824948227,
+                "value": "Baltic Sea SECA",
+                "distance": 1556637,
+                "type": "SECA",
+                "class": "EXIT"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    9.483426037785527,
+                    54.18202338561176
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1767828518684,
+                "value": "Kiel Canal",
+                "distance": 1598292,
+                "type": "ROUTING",
+                "class": "EXIT"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    9.147693018498927,
+                    53.895689311440364
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1767886249356,
+                "value": "Dover Strait",
+                "distance": 2271811,
+                "type": "ROUTING",
+                "class": "ENTRY"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    1.7886599901735247,
+                    51.25563005648504
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1767892531493,
+                "value": "Dover Strait",
+                "distance": 2345102,
+                "type": "ROUTING",
+                "class": "EXIT"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    1.0336184891633053,
+                    50.803150585830224
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1767931810214,
+                "value": "North Sea SECA",
+                "distance": 2803350,
+                "type": "SECA",
+                "class": "EXIT"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    -4.836448215139285,
+                    49.25641316822935
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1768090779458,
+                "value": "Gibraltar",
+                "distance": 4657976,
+                "type": "ROUTING",
+                "class": "ENTRY"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    -6.011546780830056,
+                    35.892177411082905
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1768091109632,
+                "value": "ECA Mediterranean Sea",
+                "distance": 4661828,
+                "type": "SECA",
+                "class": "ENTRY"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    -5.968913473870078,
+                    35.8933635029845
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1768096023500,
+                "value": "Gibraltar",
+                "distance": 4719156,
+                "type": "ROUTING",
+                "class": "EXIT"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    -5.348205166370947,
+                    35.98289220888464
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1768226017478,
+                "value": "Gela Canal",
+                "distance": 6235740,
+                "type": "ROUTING",
+                "class": "ENTRY"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    11.457617458392958,
+                    37.25224083832021
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1768231544723,
+                "value": "Gela Canal",
+                "distance": 6300224,
+                "type": "ROUTING",
+                "class": "EXIT"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    12.140650895524614,
+                    37.05668101305447
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1768399695243,
+                "value": "ECA Mediterranean Sea",
+                "distance": 8261964,
+                "type": "SECA",
+                "class": "EXIT"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    32.29749706905707,
+                    31.448176878261915
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1768402014261,
+                "value": "8.6",
+                "distance": 8289019,
+                "type": "SPEED",
+                "class": "DECREASE"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    32.34405692417111,
+                    31.222242644976845
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1768402019459,
+                "value": "Suez Canal",
+                "distance": 8289042,
+                "type": "ROUTING",
+                "class": "ENTRY"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    32.343986896416595,
+                    31.222048117059924
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1768436233382,
+                "value": "22.678",
+                "distance": 8440412,
+                "type": "SPEED",
+                "class": "INCREASE"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    32.58535397925773,
+                    29.96208973819463
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1768436426155,
+                "value": "Suez Canal",
+                "distance": 8442661,
+                "type": "ROUTING",
+                "class": "EXIT"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    32.57594191709348,
+                    29.943927283756736
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1768438090225,
+                "value": "Red Sea",
+                "distance": 8462075,
+                "type": "ROUTING",
+                "class": "ENTRY"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    32.527080180809065,
+                    29.783893513242766
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1768594904766,
+                "value": "Yemen Coast JWC",
+                "distance": 10291563,
+                "type": "ROUTING",
+                "class": "ENTRY"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    41.57194015710323,
+                    15.630116986052453
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1768608148845,
+                "value": "High Risk Area",
+                "distance": 10446076,
+                "type": "HRA",
+                "class": "ENTRY"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    42.19784765670446,
+                    14.377446957005256
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1768620209886,
+                "value": "High Risk Area",
+                "distance": 10586787,
+                "type": "HRA",
+                "class": "EXIT"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    42.851339977083505,
+                    13.324946094234036
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1768649945015,
+                "value": "Red Sea",
+                "distance": 10933694,
+                "type": "ROUTING",
+                "class": "EXIT"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    45.29700796865649,
+                    12.059470122988259
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1768734489564,
+                "value": "Yemen Coast JWC",
+                "distance": 11920039,
+                "type": "ROUTING",
+                "class": "EXIT"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    53.54836498963673,
+                    15.7435352745034
+                ]
+            }
+        },
+        {
+            "type": "Feature",
+            "properties": {
+                "timestamp": 1768895916109,
+                "value": "",
+                "distance": 13803453,
+                "type": "VOYAGE",
+                "class": "EXIT"
+            },
+            "geometry": {
+                "type": "Point",
+                "coordinates": [
+                    69.6420077263289,
+                    22.7499542783878
+                ]
+            }
+        }
+    ]
+}

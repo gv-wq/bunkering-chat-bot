@@ -1,0 +1,60 @@
+CROSS_GRAY = "✖"
+CROSS_RED = "❌"
+CHECK_GRAY = "✓"
+CHECK_GREEN_BACKGROUND = "✅"
+ASTERIS = "✳️"
+DOLLAR = "💲"
+STAR = "🌟"
+SMALL_DOT = "•"
+LUPA = "🔍"
+TARGET = "🎯"
+PIN = "📍"
+PLANET = "🗺"
+
+CALENDAR = "🗓️"
+SPEED = "🏎️"
+OIL_DUM = "🛢️"
+COMPASS = "🧭"
+MEMO = "📝"
+BOX_WITH_CHECK = "☑️"
+OPERATOR = "🧑‍💻"
+SMILE = "🙂"
+STATS = "📊"
+HI = "👋"
+THIS = "👉"
+FINE="👍"
+HANDSHAKE = "🤝"
+ANCHOR = "⚓️"
+LATIN_LETTER = "🔤"
+BRITAIN_FLAG = "🇬🇧"
+USA_FLAG = "🇺🇸"
+SHIP = "🚢"
+CHEQUERED_FLAG = "🏁"
+ARROW_UP = "↑"
+ARROW_DOWN = "↓"
+GREEN_DOT = '🟢'
+MECHANICAL_KEY = "🔧"
+INFO = "🛈"
+LINE = "—"
+# intro message
+POSTMAIL = "📩"
+PHONE = "📞"
+REPEAT = "🔄"
+PLAY = "▶️"
+PLUS="➕"
+FOLDER="📂"
+PDF = "📄"
+STATS_LINE="📈"
+COMPANY = "🏛️"
+# main menu template
+NOTE = "📋"
+NUM1 = '1️⃣'
+NUM2 = "2️⃣'"
+NUM3 = "3️⃣"
+
+
+
+
+
+
+
