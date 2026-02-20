@@ -9,6 +9,7 @@ from typing import Optional, List, Tuple, Dict
 from html import escape
 import pandas as pd
 import matplotlib.pyplot as plt
+from requests import session
 
 from app.data import emogye
 from app.data.dto.main.BunkeringStep import BunkeringStep
@@ -20,7 +21,7 @@ from app.data.dto.main.User import UserDB
 from app.data.dto.main.UserTariff import UserTariffBD
 from app.data.dto.messenger.ResponsePayload import (
     ResponsePayload,
-    ResponsePayloadCollection, FileObj,
+    ResponsePayloadCollection, MediaFile, MediaImage,
 )
 from app.data.enums.RouteStep import RouteStepEnum
 from app.data.enums.RouteTask import RouteTaskEnum
@@ -61,7 +62,8 @@ class TemplateService:
             if session.current_step == SearchRouteStepEnum.CONFIRM_DELETE.value:
                 return ResponsePayloadCollection(
                 responses=[ResponsePayload(
-                    text="<b> Are you sure?\n1. Yes\n0. Cancel\n</b>"
+                    text=" <b>Are you sure?\n1. Yes\n0. Cancel\n </b> ",
+                    keyboard=self.navigation_handler.get_yes_no_keyboard()
                 )]
             )
             return await self.search_route_template(session=session, message=err_msg)
@@ -71,7 +73,7 @@ class TemplateService:
 
         return ResponsePayloadCollection(
             responses=[
-                ResponsePayload(text="Ouch!. Something went wrong.")
+                ResponsePayload(text="Ouch!. Something went wrong.", keyboard=None)
             ]
         )
 
@@ -79,7 +81,7 @@ class TemplateService:
     async def get_create_route_template(self, session: SessionDB, err_msg: Optional[str] = None):
         route, err = await self.sql_db.get_or_create_route(session)
         if err:
-            return ResponsePayload(err=err)
+            return ResponsePayload(err=err, keyboard=None)
 
         current_step = session.current_step
 
@@ -96,7 +98,7 @@ class TemplateService:
             return await self.average_speed_template(session, route, err_msg)
 
         elif current_step == RouteStepEnum.FUEL_SELECTION.value:
-            return await self.fuel_selection_template(session, route)
+            return await self.fuel_selection_template(session, route, err_msg)
 
         elif current_step == RouteStepEnum.ROUTE_PORT_LIST.value:
             return await self.build_universal_bunkering_template(session, route, err_msg)
@@ -146,7 +148,19 @@ class TemplateService:
             destination_port, dest_err = await self.sql_db.get_port_by_id(route.destination_port_id)
             #destination_port = route.data.port_selection.destination_candidate
 
-        lines = [title]
+        lines = [title, ""]
+
+        if route.vessel_name:
+            if is_updating and session.current_step == RouteStepEnum.VESSEL_NAME.value:
+                lines.append(f"{emogye.PLAY}  <b>Vessel name (current):</b>  {route.vessel_name}")
+            else:
+                lines.append(f" <b>Vessel name:</b>  {route.vessel_name}")
+
+        if route.imo_number:
+            if is_updating and session.current_step == RouteStepEnum.VESSEL_IMO.value:
+                lines.append(f"{emogye.PLAY}  <b>IMO number (current):</b> {route.vessel_name}")
+            else:
+                lines.append(f" <b>IMO number:</b> {route.imo_number}")
 
         if add_lines:
             lines.extend(add_lines)
@@ -162,7 +176,6 @@ class TemplateService:
                 lines.append("\n" + departure_port.format_port(True))
 
         if destination_port:
-
             dest_db, err = await self.sql_db.get_port_by_locode(destination_port.locode)
             if dest_db and not err:
                 destination_port = dest_db
@@ -173,32 +186,16 @@ class TemplateService:
                 lines.append("\n" +  destination_port.format_port(False) + "\n")
 
         if route.departure_date:
-
             if is_updating and session.current_step == RouteStepEnum.DEPARTURE_DATE.value:
-                lines.append(f"{emogye.PLAY} Departure date (current): {route.departure_date.strftime('%B %d, %Y')}")
+                lines.append(f"{emogye.PLAY} <b>Departure date (current):</b> {route.departure_date.strftime('%B %d, %Y')}")
             else:
-                lines.append(
-                f"Departure date: {route.departure_date.strftime('%B %d, %Y')}"
-            )
+                lines.append(f" <b>Departure date:</b> {route.departure_date.strftime('%B %d, %Y')}")
 
         if route.average_speed_kts:
-
             if is_updating and session.current_step == RouteStepEnum.AVERAGE_SPEED.value:
-                lines.append(f"{emogye.PLAY} Avg.speed (current): {route.average_speed_kts} knots")
+                lines.append(f"{emogye.PLAY}  <b>Avg.speed (current):</b> {route.average_speed_kts} knots")
             else:
-                lines.append(f"Avg. speed: {route.average_speed_kts} knots")
-
-        if route.vessel_name:
-            if is_updating and session.current_step == RouteStepEnum.VESSEL_NAME.value:
-                lines.append(f"{emogye.PLAY} Vessel name (current): {route.vessel_name}")
-            else:
-                lines.append(f"Vessel name: {route.vessel_name}")
-
-        if route.imo_number:
-            if is_updating and session.current_step == RouteStepEnum.VESSEL_IMO.value:
-                lines.append(f"{emogye.PLAY} IMO number (current): {route.vessel_name}")
-            else:
-                lines.append(f"IMO number: {route.imo_number}")
+                lines.append(f" <b>Avg. speed:</b> {route.average_speed_kts} knots")
 
         lines.append(" ")
         return "\n".join(lines)
@@ -261,7 +258,7 @@ class TemplateService:
         if message:
             text = f"{message}\n\n{text}"
 
-        return ResponsePayloadCollection(responses=[ResponsePayload(text=text)])
+        return ResponsePayloadCollection(responses=[ResponsePayload(text=text, keyboard=self.navigation_handler.get_main_menu_keyboard(session))])
 
     #
     #
@@ -393,7 +390,7 @@ class TemplateService:
             lines.append(f"\n{emogye.THIS} Waiting for new departure date...\n")
 
         lines.extend([
-            f"\n{emogye.THIS} <b>Confirm or enter new date.</b>\n" if route.departure_date else f"\n{emogye.THIS} <b>Departure date?</b>\n",
+            f"\n{emogye.THIS}  <b> Confirm or enter new date. </b> \n" if route.departure_date else f"\n{emogye.THIS}  <b> Departure date? </b> \n",
         ])
         if message:
             lines.append(f"Note: {message}")
@@ -422,7 +419,7 @@ class TemplateService:
         text = header_text + text + navigation_text
         #text = header_text + navigation_text
 
-        return ResponsePayloadCollection(responses=[ResponsePayload(text=text)])
+        return ResponsePayloadCollection(responses=[ResponsePayload(text=text, keyboard=self.navigation_handler.get_navigation_keyboard(session.current_step))])
 
     async def average_speed_template(self, session: SessionDB, route: SeaRouteDB, message: Optional[str] = None) -> ResponsePayloadCollection:
 
@@ -432,9 +429,9 @@ class TemplateService:
         #   lines.append(f"\n Waiting for avg. speed value...\n")
 
         if route.average_speed_kts:
-            lines.append(f"\n{emogye.THIS}<b> Enter new or confirm with yes(y).</b>\n")
+            lines.append(f"\n{emogye.THIS} <b>Enter new or confirm with yes(y). </b> \n")
         else:
-            lines.append(f"\n{emogye.THIS}<b> Enter vessel avg. speed in knots.</b>")
+            lines.append(f"\n{emogye.THIS} <b>Enter vessel avg. speed in knots. </b> ")
 
         if message:
             lines.append(f"Note: {message}")
@@ -442,18 +439,25 @@ class TemplateService:
         header_text = await self.get_new_route_header(session, route)
         navigation_text = self.navigation_handler.get_navigation_text(session)
         text = header_text + "\n".join(lines) + navigation_text
-        return ResponsePayloadCollection(responses=[ResponsePayload(text=text)])
+
+        keyboard = self.navigation_handler.get_navigation_keyboard(session.current_step)
 
 
-    async def fuel_selection_template(self, session: SessionDB, route: SeaRouteDB) -> ResponsePayloadCollection:
+        return ResponsePayloadCollection(responses=[ResponsePayload(text=text, keyboard=keyboard)])
+
+
+    async def fuel_selection_template(self, session: SessionDB, route: SeaRouteDB, err_msg: Optional[str] = None) -> ResponsePayloadCollection:
         lines = []
 
         if route.data.is_updating:
             lines.append("\nWaiting for new departure date...\n")
 
         lines.extend([
-            f"\n{emogye.THIS} <b>Please enter a number from the menu (e.g. 1, 2, 3):</b>\n"
+            f"\n{emogye.THIS}  <b> Please confirm with yes(y) or choose again (e.g. 1, 2): </b> \n"
         ])
+
+        if err_msg:
+            lines.extend([err_msg, '\n'])
 
         available_fuels = []
 
@@ -478,7 +482,7 @@ class TemplateService:
         navigation_text = self.navigation_handler.get_navigation_text(session)
 
         text = header_text + body_text + navigation_text
-        return ResponsePayloadCollection(responses=[ResponsePayload(text=text)])
+        return ResponsePayloadCollection(responses=[ResponsePayload(text=text,keyboard=self.navigation_handler.get_navigation_keyboard())])
 
 
     def format_port_block(self, step: BunkeringStep, index):
@@ -547,6 +551,7 @@ class TemplateService:
 
         any_selected = any([s.selected for s in route.bunkering_steps])
         show_remove_status = True if any_selected else False
+        no_ports_err = "\nNo ports available."
 
         # -------- Determine steps --------
         if mode == RouteStepEnum.ROUTE_PORT_LIST.value and not any_selected:
@@ -554,7 +559,7 @@ class TemplateService:
 
         else:
             steps = [s for s in route.bunkering_steps if s.selected]
-
+            no_ports_err = "\n <b> No ports were selected. Go back and select at least one. </b> "
 
 
 
@@ -582,7 +587,7 @@ class TemplateService:
 
         image, image_err = await self.map_image_api.render_map(route.data.departure_to_destination_coordinates, indexed)
         if image and not image_err:
-            images.append(image)
+            images.append(MediaImage(content=image))
             # with open("f.png", "wb") as fp:
             #     fp.write(image)
 
@@ -592,7 +597,7 @@ class TemplateService:
             return ResponsePayloadCollection(
                 responses=[
                     ResponsePayload(
-                        text=header + "\nNo ports available.",
+                        text=header + no_ports_err,
                         images=images#[route.map_image_bytes] if route.map_image_bytes  else []
                     )
                 ]
@@ -622,23 +627,24 @@ class TemplateService:
         first = [header]
 
         if message:
-            first.append(message)
+            first.extend([message, '\n'])
 
         # Mode instructions
         if mode == RouteStepEnum.ROUTE_PORT_LIST.value:
-            first.append(f"{emogye.THIS} <b>Select ports with 1, 2, 3 - 5\nOr confirm all (yes/y).</b>")
+            first.append(f"{emogye.THIS}  <b> Select ports with 1, 2, 3 - 5\nOr confirm all (yes/y). </b> ")
 
             if show_remove_status:
-                first.append("<b>To remove ports from the list, use:</b>")
-                first.append("<b>remove 1, 2, 3 - 5</b>")
+                first.append(" <b> To remove ports from the list, use: </b> ")
+                first.append(" <b> remove 1, 2, 3 - 5 </b> ")
 
             first.append(f"\n{emogye.STAR} - cheapest port.")
             first.append(f"{emogye.CHECK_GRAY} - selected port.")
 
         else:
-            first.append(f"{emogye.THIS} <b>Enter fuel quantity or confirm with yes(y):")
-            #first.append("(port number) (fuel #1 quantity) (fuel #2 quantity) (fuel #... quantity)")
-            first.append("Example: 1 200 300 / 2 400 500</b>")
+            first.append(f"{emogye.NOTE_THIS}  <b> Enter quantities per port in this format:")
+            first.append("port_number fuel1 fuel2")
+            first.append("Separate ports with /")
+            first.append("Example: 1 200 100 / 4 500 10 </b> ")
             first.append("")
             #first.append("Enter yes, fine or done when approved")
 
@@ -690,7 +696,7 @@ class TemplateService:
 
             summary = [#"Estimated cost summary:",
 
-                       "", f"<b>Estimated cost:</b> ${total_cost:,.0f}",]
+                       "", f" <b> Estimated cost: </b>  ${total_cost:,.0f}",]
             preferred_order = ["VLS FO", "MGO LS"]
             all_fuels_set = set(fuel_totals.keys())
 
@@ -723,7 +729,7 @@ class TemplateService:
         last_parts.append(f"\n{emogye.PLANET} On map: \n" + route_map_link)
         last_parts.append( self.navigation_handler.get_navigation_text(session))
 
-        responses.append(ResponsePayload(text="\n".join(last_parts)))
+        responses.append(ResponsePayload(text="\n".join(last_parts), keyboard=self.navigation_handler.get_navigation_keyboard(session.current_step)))
 
         return ResponsePayloadCollection(responses=responses)
 
@@ -796,14 +802,14 @@ class TemplateService:
         if session.current_step == RouteStepEnum.DEPARTURE_PORT_SUGGESTION.value:
             candidate = route.data.port_selection.departure_candidate
             suggestions = route.data.port_selection.departure_suggestions
-            prompt = f"\n{emogye.THIS} <b>Type yes(y) to confirm if port is correct\n      or Enter new name\n      Or Choose from list (e.g. 1, 2, 3).</b>" if candidate else f"{emogye.THIS} <b> What’s your departure port? </b>"
+            prompt = f"\n{emogye.THIS}  <b> Type yes(y) to confirm if port is correct</b>\n       <b>or Enter new name</b>\n       <b>Or Choose from list (e.g. 1, 2, 3). </b> " if candidate else f"{emogye.THIS}  <b>What’s your departure port?</b> "
             port_arrow = emogye.ARROW_UP
             port_color = "purple"
 
         else:
             candidate = route.data.port_selection.destination_candidate
             suggestions = route.data.port_selection.destination_suggestions
-            prompt = f"\n{emogye.THIS} <b>Type yes(y) to confirm if port is correct\n      or Enter new name\n      Or Choose from list (e.g. 1, 2, 3). </b>" if candidate else f"{emogye.THIS} <b> What’s your destination port? </b>"
+            prompt = f"\n{emogye.THIS}  <b> Type yes(y) to confirm if port is correct</b>\n       <b>or Enter new name</b>\n       <b>Or Choose from list (e.g. 1, 2, 3).</b> " if candidate else f"{emogye.THIS}  <b>What’s your destination port?</b> "
 
             port_arrow = emogye.ARROW_DOWN
             port_color = "purple"
@@ -837,14 +843,14 @@ class TemplateService:
             top.extend(["", message])
 
 
-
         # ---------------------- NO SUGGESTIONS ----------------------
         if not suggestions:
             return ResponsePayloadCollection(
                 responses=[
                     ResponsePayload(
                         text="\n".join(top) + nav,
-                        images=images
+                        images=images,
+                        keyboard=self.navigation_handler.get_navigation_keyboard(session.current_step)
                     )
                 ]
             )
@@ -860,7 +866,7 @@ class TemplateService:
             indexed.append(port.to_indexed2(str(i), "orange", "medium", False))
 
         images_generated = await self.map_image_api.render_map_images([], indexed, True)
-        images.extend(images_generated)
+        images.extend([MediaImage(content=content) for content in images_generated])
 
         # ---------------------- BUILD ATOMIC BLOCKS ----------------------
         global_counter = 1
@@ -883,7 +889,8 @@ class TemplateService:
         responses.append(
             ResponsePayload(
                 text=header + first_blocks[0],
-                images=images
+                images=images,
+                keyboard=None
             )
         )
 
@@ -899,6 +906,7 @@ class TemplateService:
         # )
 
         responses[-1].text +=  "\nOn map:\n" + map_link + nav
+        responses[-1].keyboard = self.navigation_handler.get_navigation_keyboard(session.current_step)
 
         return ResponsePayloadCollection(responses=responses)
 
@@ -986,7 +994,7 @@ class TemplateService:
             f"{emogye.PIN} My routes",
          #   f"Departure date filter: {search.date.strftime('%B %d, %Y') if search.date else UNKNOWN}",
             "",
-            f"{emogye.THIS} <b>Choose from list (e.g. 1, 2, 3).</b>",
+            f"{emogye.THIS}  <b> Choose from list (e.g. 1, 2, 3). </b> ",
         #    "To add the departure date filter, enter the date please.",
         ]
 
@@ -1025,7 +1033,9 @@ class TemplateService:
                 route.data.departure_to_destination_coordinates or [],
                 indexed,
             )
-            all_images.extend(images)
+
+            for i in images:
+                all_images.append(MediaImage(content=i))
 
             route_blocks.append(
                 self.format_route_block(global_counter, route, dep_port, dest_port)
@@ -1051,145 +1061,39 @@ class TemplateService:
             ResponsePayload(
                 text=header + chunks[0],
                 images=all_images,
+                keyboard=None
             )
         )
 
         # ---------- MIDDLE ----------
         for chunk in chunks[1:]:
-            responses.append(ResponsePayload(text=chunk))
+            responses.append(ResponsePayload(text=chunk, keyboard=None))
 
         # ---------------------- FOOTER ----------------------
         footer = "\n".join([
             "",
             f"Page {current_page} / {total_pages} • Total routes: {total}",
             "",
-            "Navigation:",
-            '- "+" - show more routes',
-            '- "-" - show previous routes',
-            '- "num" - open route',
-            '- "remove num" - remove route № ...',
+            "Navigation Commands:",
+            '+ — Show more routes',
+            '— — Show previous routes',
+            'number — Open a route',
+            'remove number — Remove a route from the list',
          #   '• "reset"  reset date filter',
             #'- "back"  to prev step',
-            '- "menu" - to Main menu',
+            'menu — Main menu',
+            " ",
+            "Examples:",
+            "3 — open route #3",
+            "remove 2 — remove route #2"
 
         ])
 
-        responses.append(ResponsePayload(text=footer))
+        responses.append(ResponsePayload(text=footer, keyboard = self.navigation_handler.get_show_route_navigation_keyboard(session)))
 
         return ResponsePayloadCollection(responses=responses)
 
-    # async def search_route_template(self, session: SessionDB, message: Optional[str] = None) -> ResponsePayloadCollection:
-    #     def fmt_port(p):
-    #         if p is None:
-    #             return UNKNOWN
-    #         return f"{p.port_name or UNKNOWN}  {p.country_name or UNKNOWN}  {p.locode or UNKNOWN}"
-    #
-    #     search = session.data.route_search
-    #     page_size = 5
-    #
-    #     # Load routes
-    #     routes: List[SeaRouteDB] = []
-    #     if search:
-    #         for route_id in search.ids:
-    #             route, _ = await self.sql_db.get_route_by_id_2(session.user_id, route_id)
-    #             if route:
-    #                 routes.append(route)
-    #
-    #     # ---------- PAGE INFO ----------
-    #     total = search.total or 0
-    #     current_page = (search.offset // page_size) + 1 if total else 1
-    #     total_pages = max(1, (total + page_size - 1) // page_size)
-    #
-    #     # ---------- HEADER ----------
-    #     lines = [
-    #         "Task - Route Search",
-    #
-    #     ]
-    #     images = []
-    #
-    #     # Date filter
-    #     if search.date:
-    #         lines.append(f"Departure date filter: {search.date.strftime('%B %d, %Y')}")
-    #     else:
-    #         lines.append(f"Departure date filter: {UNKNOWN}")
-    #
-    #     if message:
-    #         lines.append(message)
-    #
-    #     if not routes:
-    #         lines.append(f"\n{YELLOW_ALERT}: no routes found")
-    #
-    #     map_data : List[DepartureToDestinationCoordinatesPath] = []
-    #     # ---------- ROUTE CARDS ----------
-    #     for i, route in enumerate(routes, 1):
-    #         dep_port, _ = await self.sql_db.get_port_by_id(route.departure_port_id)
-    #         dest_port, _ = await self.sql_db.get_port_by_id(route.destination_port_id)
-    #
-    #         indexed = []
-    #         if dep_port:
-    #             indexed.append(dep_port.to_indexed2(emogye.ARROW_UP, "green", "medium", True))
-    #
-    #         if dest_port:
-    #             indexed.append(dest_port.to_indexed2(emogye.ARROW_DOWN, "red", "medium", True))
-    #
-    #         for step in route.bunkering_steps:
-    #             if not step.selected:
-    #                 continue
-    #             indexed.append(step.port.to_indexed2(str(step.n), "blue", "medium", False))
-    #
-    #         image, image_err = await self.map_image_api.render_map(route.data.departure_to_destination_coordinates or [], indexed, True)
-    #         if image and not image_err:
-    #             images.append(image)
-    #
-    #
-    #
-    #         #
-    #         # if dep_port and dest_port:
-    #         #     m_data =  DepartureToDestinationCoordinatesPath(departurePort=dep_port, destinationPort=dest_port, coordinates=route.data.departure_to_destination_coordinates)
-    #         #     map_data.append(m_data)
-    #         #
-    #         #     image, err =  await self.map_image_api.build_routes_map_image([m_data])
-    #         #     if image and not err:
-    #         #         if image['error'] is None:
-    #         #             images.append(eval(image['image_bytes']))
-    #
-    #
-    #         lines.extend([
-    #             "",
-    #             f"{i}. Departure:  {fmt_port(dep_port)}",
-    #             f"    Destination: {fmt_port(dest_port)}",
-    #             f"    Departure date: {route.departure_date.strftime('%Y-%m-%d') if route.departure_date else UNKNOWN}",
-    #             f"    Average speed, knots: {route.average_speed_kts or UNKNOWN}",
-    #             f"    Map on: {self.map_image_api.get_route_map_link(str(route.id))}"
-    #         ])
-    #
-    #     lines.append(f"\nPage: {current_page} of {total_pages} (total routes: {total})")
-    #
-    #     # ---------- COMMANDS ----------
-    #     lines.extend([
-    #         "",
-    #         "Commands:",
-    #         ' - "+" - show next chunk',
-    #         ' - "-" - show prev chunk',
-    #         ' - show "num" - show route details',
-    #         ' - delete "num" - delete a route',
-    #         ' - update "num" - update & recalc route',
-    #     ])
-    #     #image, err = await self.map_image_api.build_routes_map_image(map_data)
-    #
-    #
-    #
-    #
-    #
-    #     navigation_text = self.navigation_handler.get_navigation_text(session)
-    #     text = "\n".join(lines) + "\n" + navigation_text
-    #     response = ResponsePayload(text=text)
-    #     #if image:
-    #     #    response.images.append(eval(image['image_bytes']))
-    #     if len(images) > 0:
-    #         response.images.extend(images)
-    #
-    #     return ResponsePayloadCollection(responses=[response])
+
     async def show_route_template(
             self,
             route: SeaRouteDB,
@@ -1233,7 +1137,7 @@ class TemplateService:
             indexed
         )
         if image and not image_err:
-            images.append(image)
+            images.append(MediaImage(content=image))
 
         route_map_link = self.map_image_api.get_route_map_link(str(route.id))
 
@@ -1259,10 +1163,10 @@ class TemplateService:
         ]
 
         header_lines.extend([
-            f"{emogye.THIS} <b>Do you want to update the route?:",
-            'Enter yes(y) to do it,',
+            f"{emogye.THIS}  <b> Do you want to update the route?:</b>",
+            ' <b>Enter yes(y) to do it,</b>',
             '',
-            'Or enter "remove" to remove it. </b>'
+            ' <b>Or enter "remove" to remove it.</b> '
             #'• "2 or remove (r)"  remove route',
             #'• "0 or back (b)"  back to list',
             "\n",
@@ -1293,7 +1197,8 @@ class TemplateService:
         responses.append(
             ResponsePayload(
                 text="\n".join(first_parts),
-                images=images
+                images=images,
+                keyboard=None
             )
         )
 
@@ -1368,7 +1273,8 @@ class TemplateService:
 
         responses.append(
             ResponsePayload(
-                text="\n".join(last_parts)
+                text="\n".join(last_parts),
+                keyboard = self.navigation_handler.get_show_route_navigation_keyboard2("asda")
             )
         )
 
@@ -1671,10 +1577,9 @@ class TemplateService:
 
         image, image_err = await self.map_image_api.render_map(route.data.departure_to_destination_coordinates, indexed)
         if image and not image_err:
-            images.append(image)
+            images.append(MediaImage(content=image))
 
         return final_email_html, subject, images
-
 
     def render_images_html(self, images: list[str]) -> str:
         if not images:
@@ -1724,7 +1629,7 @@ class TemplateService:
 
         # Base64 encode the image for embedding in HTML
         if image and not image_err:
-            images.append(image)
+            images.append(MediaImage(content=image))
 
         images_html = self.render_images_html(images)
 
@@ -2009,8 +1914,6 @@ class TemplateService:
         return final_email_html, subject, images
 
 
-
-
     async def show_route_user_template(self, route: SeaRouteDB) -> Tuple[ResponsePayloadCollection, str, bool]:
         departure_port = None
         destination_port = None
@@ -2072,7 +1975,7 @@ class TemplateService:
         images = []
         image, err = await self.map_image_api.render_map(route.data.departure_to_destination_coordinates, indexed)
         if image and not err:
-            images.append(image)
+            images.append(MediaImage(content=image))
 
 
 
@@ -2082,7 +1985,8 @@ class TemplateService:
                 responses=[
                     ResponsePayload(
                         text=header + "\nNo ports available.",
-                        images=images
+                        images=images,
+                        keyboard=self.navigation_handler.get_navigation_keyboard()
                     )
                 ]
             ), subject, False
@@ -2099,7 +2003,8 @@ class TemplateService:
                 responses=[
                     ResponsePayload(
                         text=header + "\nNo ports available.",
-                        images=images
+                        images=images,
+                        keyboard=None
                     )
                 ]
             ), subject, False
@@ -2113,12 +2018,13 @@ class TemplateService:
         responses.append(
             ResponsePayload(
                 text="\n".join(first),
-                images=images
+                images=images,
+                keyboard=None
             )
         )
 
         for chunk in port_chunks[1:-1]:
-            responses.append(ResponsePayload(text=chunk))
+            responses.append(ResponsePayload(text=chunk, keyboard=None))
 
         last_parts = []
 
@@ -2166,10 +2072,16 @@ class TemplateService:
 
         # --- If no port search started ---
         if not getattr(session.data, "check_port_fuel_price", None):
-            lines.append(f"\n{emogye.THIS} <b>Enter the port info to search prices.</b>")
+            lines.append(f"\n{emogye.THIS}  <b> Enter the port info to search prices. </b> ")
             if message:
                 lines.append(f"\nErr: {message}")
-            return ResponsePayloadCollection(responses=[ResponsePayload(text=chr(10).join(lines))])
+
+            lines.extend([
+                "\n",
+                "Navigation:",
+                "- menu - to main menu",
+            ])
+            return ResponsePayloadCollection(responses=[ResponsePayload(text=chr(10).join(lines), keyboard=self.navigation_handler.get_menu_keyboard())])
 
         # --- Extract port and prices safely ---
         port_info = getattr(session.data.check_port_fuel_price, "port", None)
@@ -2266,7 +2178,7 @@ class TemplateService:
                 fig.savefig(buf, format='png', dpi=300)
                 buf.seek(0)
                 image_bytes = buf.getvalue()
-                images.append(image_bytes)
+                images.append(MediaImage(content=image_bytes))
                 buf.close()
                 plt.close(fig)
             except Exception as e:
@@ -2289,9 +2201,9 @@ class TemplateService:
                for fuel in df_sorted.columns:
                    value = latest_row[fuel]
                    if pd.notna(value):
-                       lines.append(f"{latest_date.strftime('%b-%d-%Y')}    {fuel}        <b>${value:.0f}</b>")
+                       lines.append(f"{latest_date.strftime('%b-%d-%Y')}    {fuel}         <b> ${value:.0f} </b> ")
                    else:
-                       lines.append(f"{latest_date.strftime('%b-%d-%Y')}    {fuel}        <b>Not available</b>")
+                       lines.append(f"{latest_date.strftime('%b-%d-%Y')}    {fuel}         <b> Not available </b> ")
 
 
             except Exception as e:
@@ -2301,24 +2213,28 @@ class TemplateService:
 
 
 
-        indexed = []
+        #indexed = []
         global_counter = 1
         blocks = []
-        for p in port_alternatives:
-            blocks.append(p.format_indexed(global_counter))
-            indexed.append(p.to_indexed2(str(global_counter), "orange", "medium", False))
-            global_counter += 1
+        # for p in port_alternatives:
+        #     blocks.append(p.format_indexed(global_counter))
+        #     indexed.append(p.to_indexed2(str(global_counter), "orange", "medium", False))
+        #     global_counter += 1
+        #
+        # images_new = await self.map_image_api.render_map_images([], indexed, True)
+        # images.extend([MediaImage(content=c) for c in images_new])
 
-        images_new = await self.map_image_api.render_map_images([], indexed, True)
-        images.extend(images_new)
-
-        header = "\n".join(lines) + f"\n\n{emogye.THIS} <b>Enter new port name if needed.</b>" + "\n\nName similar:\n"
+        header = "\n".join(lines) + f"\n\n{emogye.THIS}  <b> Enter new port name if needed. </b> " + "\n\nName similar:\n"
         first_limit = self.MAX_MSG_LEN - len(header)
         responses = []
         first_blocks = self.split_blocks(blocks, first_limit)
+
+        if len(first_blocks) > 0:
+            header += first_blocks[0]
+
         responses.append(
             ResponsePayload(
-                text=header + first_blocks[0],
+                text=header,
                 images=images
             )
         )
@@ -2327,6 +2243,7 @@ class TemplateService:
             responses.append(ResponsePayload(text=chunk))
 
         responses[-1].text += "\nNavigation:\n- menu - Main menu"
+        responses[-1].keyboard = self.navigation_handler.get_to_main_menu_keyboard(session)
 
         return ResponsePayloadCollection(responses=responses)
 
@@ -2451,7 +2368,7 @@ class TemplateService:
         text = header_text + text + navigation_text
 
         return ResponsePayloadCollection(
-            responses=[ResponsePayload(text=text)]
+            responses=[ResponsePayload(text=text, keyboard=self.navigation_handler.get_navigation_keyboard(session.current_step))]
         )
 
     async def user_name_template(self, session: SessionDB, message: str = None):
@@ -2459,16 +2376,14 @@ class TemplateService:
             f"By the way {emogye.SMILE}",
             "How can I call you here?",
             "",
-            "First name is enough — optional.",
-            "You can type '-' to skip."
+            "First name is enough",
+          #  "You can type '-' to skip."
         ]
 
         if message:
             lines.extend(["", "Note:", message])
 
-        return ResponsePayloadCollection(
-            responses=[ResponsePayload(text="\n".join(lines))]
-        )
+        return ResponsePayloadCollection(responses=[ResponsePayload(text="\n".join(lines))])
 
     async def vessel_name_template(
             self,
@@ -2484,7 +2399,7 @@ class TemplateService:
             lines.append("\nWaiting for new vessel name...\n")
 
         lines.extend([
-            f"\n{emogye.THIS} <b>Enter vessel name:</b>" if not route.vessel_name else f"\n {emogye.THIS} <b>Enter new name or confirm current.</b>",
+            f"\n{emogye.THIS}  <b> Enter vessel name: </b> " if not route.vessel_name else f"\n {emogye.THIS}  <b> Enter new name or confirm current. </b> ",
             "",
            # "Examples:",
             "Like \"Maersk Alabama\"",
@@ -2505,7 +2420,7 @@ class TemplateService:
         text = header_text + text + navigation_text
 
         return ResponsePayloadCollection(
-            responses=[ResponsePayload(text=text)]
+            responses=[ResponsePayload(text=text, keyboard=self.navigation_handler.get_navigation_keyboard(session.current_step))]
         )
 
 
@@ -2524,7 +2439,7 @@ class TemplateService:
             lines.append("\nWaiting for new IMO number...\n")
 
         lines.extend([
-            f"\n{emogye.THIS} <b>Enter the IMO number\n(example: 9312345)\nor type yes/y to skip this step.</b>" if not route.imo_number else f"\n{emogye.THIS} <b> Enter new IMO or yes(y) to confirm </b>",
+            f"\n{emogye.THIS}  <b>Enter the IMO number</b>\n<b>(example: 9312345)</b>\n<b>or type yes/y to skip this step. </b> " if not route.imo_number else f"\n{emogye.THIS}  <b>Enter new IMO or yes(y) to confirm</b> ",
             ""
         ])
 
@@ -2547,7 +2462,7 @@ class TemplateService:
         text = header_text + text + navigation_text
 
         return ResponsePayloadCollection(
-            responses=[ResponsePayload(text=text)]
+            responses=[ResponsePayload(text=text,keyboard=self.navigation_handler.get_navigation_keyboard(session.current_step))]
         )
 
     def format_tariffs_lines(self, tariffs: List[UserTariffBD]) -> List[str]:
@@ -3116,20 +3031,20 @@ class TemplateService:
 
     async def new_start_template(self, session: SessionDB, message: str = None, is_admin: bool = False):
         lines = [
-            f"{emogye.THIS} <b>To tailor the results for you, please share your role to https://thebunkering.com/. </b>",
+            f"{emogye.THIS}  <b> To tailor the results for you, please share your role to https://thebunkering.com/.</b> ",
         ]
 
         user, err = await self.sql_db.get_user_by_id(session.user_id)
         if err:
             lines.extend([
                 "\n",
-                "<b>Could not find the user. Try again please.</b>"
+                " <b> Could not find the user. Try again please. </b> "
             ])
         else:
             lines.extend([
                 #"\nCurrently selected role: " + user.role if user.role else "not selected",
                 #"After role selected, please text \"fine\" or \"next\""
-                f"\n{emogye.THIS} <b>Please enter a number from the menu (e.g. 1, 2, 3).</b>"
+                f"\n{emogye.THIS}  <b> Please enter a number from the menu (e.g. 1, 2, 3). </b> "
             ])
 
         # if message:
@@ -3146,7 +3061,7 @@ class TemplateService:
             f"6. Technical / Other {emogye.MECHANICAL_KEY}"
         ])
 
-        return ResponsePayloadCollection(responses=[ResponsePayload(text="\n".join(lines))])
+        return ResponsePayloadCollection(responses=[ResponsePayload(text="\n".join(lines), keyboard=self.navigation_handler.get_role_choice_keyboard())])
 
     async def pdf_request_template(
             self,
@@ -3165,7 +3080,7 @@ class TemplateService:
             "- Bunkering ports",
             "- Totals",
             "",
-            f"{emogye.THIS} <b>Want me to do it? Yes(y)/No(n)</b>",
+            f"{emogye.THIS}  <b> Want me to do it? Yes(y)/No(n) </b> ",
         ]
 
         text = "\n".join(lines)
@@ -3177,7 +3092,7 @@ class TemplateService:
         navigation_text = self.navigation_handler.get_navigation_text(session)
         text = header_text + text + navigation_text
 
-        return ResponsePayloadCollection(responses=[ResponsePayload(text=text)])
+        return ResponsePayloadCollection(responses=[ResponsePayload(text=text, keyboard=self.navigation_handler.get_yes_no_back_keyboard())])
 
     async def user_email_template(
             self,
@@ -3214,7 +3129,7 @@ class TemplateService:
                 "- john.doe@example.com",
                 "- ops@company.com",
                 "",
-                f"Please make sure the email address is correct.\n{emogye.THIS} <b>Enter yes(y) to get email. </b>"
+                f"Please make sure the email address is correct.\n{emogye.THIS}  <b> Enter yes(y) to get email.</b> "
             ]
 
             text = "\n".join(lines)
@@ -3223,8 +3138,8 @@ class TemplateService:
                 text += f"\n\nNote: {message}\n"
 
             text = text + navigation_text
-
-            responses.append(ResponsePayload(text=text))
+            # responses[-1].keyboard = self.navigation_handler.get_navigation_keyboard(session)
+            responses.append(ResponsePayload(text=text, keyboard=self.navigation_handler.get_navigation_keyboard(session.current_step)))
 
         else:
             # MESSAGE 1 — GENERATING
@@ -3308,6 +3223,8 @@ class TemplateService:
         # User info
         user_db, err = await self.sql_db.get_user_by_id(route.user_id)
         subject = f"BunkeringBot {user_db.first_name or ''} {user_db.last_name or ''} {user_db.telegram_user_name or ''}" if user_db else ""
+        if route.data.quote_requested:
+            subject += " WITH BUNKER QUOTES REQUEST!"
 
         # Map image
         indexed = []
@@ -3339,7 +3256,9 @@ class TemplateService:
                 images.append(base64_image)
             else:
                 print(f"Unexpected image data type: {type(image_data)}")
-        # Voyage overview
+
+
+    # Voyage overview
         overview = {
             "user": user,
             "departure": departure.format_port().replace("\n", ""),
@@ -3433,8 +3352,8 @@ class TemplateService:
 
         file_name = f"{overview['departure']} to {overview['destination']} at {overview['departure_date']}"
         html_content_bytes = self.html_to_pdf(html_content)
-        file_obj = FileObj(name=file_name, content=html_content_bytes)
-        return  html_content, html_content_bytes, file_obj, subject, images, image_data
+        file_obj = MediaFile(filename=file_name, content=html_content_bytes)
+        return  html_content, html_content_bytes, file_obj, subject, images, image_data if not image_err else b''
 
     async def supplier_prices_template(
             self,
@@ -3444,21 +3363,42 @@ class TemplateService:
             status : bool = None
     ):
 
-        header_text =self.navigation_handler.get_step_title(session.current_step,)
+        header_text = self.navigation_handler.get_step_title(session.current_step,)
 
         text = header_text
+        keyboard = None
 
         if not status:
-            text += f"\n\nI can request live supplier prices — free and with no obligation.\n{emogye.THIS} <b>Want me to do that? (Yes/No).</b>"
+            text += f"\n\nI can request live supplier prices — free and with no obligation.\n{emogye.THIS}  <b> Want me to do that? (Yes/No). </b> "
+            keyboard = self.navigation_handler.get_yes_no_back_keyboard()
         else:
             text += f"\n\nPerfect {emogye.FINE}\nI’ll reach out to suppliers and get back to you with live quotes.\nMight need a couple of quick details along the way."
 
         if message:
             text += "\n" + message
 
-        return ResponsePayloadCollection(
-            responses=[ResponsePayload(text=text)]
-        )
+        return ResponsePayloadCollection(responses=[ResponsePayload(text=text, keyboard=keyboard)])
+
+    def get_supplier_request(self, session: SessionDB, route: SeaRouteDB, message: Optional[str] = None):
+        lines = []
+
+        if route.data.quote_requested:
+            lines.extend([
+                f"{emogye.FINE} The request was sent!",
+                "",
+                f"{emogye.OIL_STATION}  <b> Supplier requests will help confirm real prices and availability </b> ",
+                "for your route."
+            ])
+
+        else:
+            lines.extend([
+                f"{emogye.FINE} No problem — the request was not sent.",
+                "",
+                f"{emogye.OIL_STATION}  <b> Supplier requests help confirm real prices and availability </b> ",
+                "for your route."
+            ])
+
+        return ResponsePayloadCollection(responses=[ResponsePayload(text="\n".join(lines))])
 
 
     async def company_name_template(self, session, route, message: str = None):
@@ -3473,7 +3413,7 @@ class TemplateService:
 
         lines = [
             f"Quick check {emogye.SMILE}",
-            "What company name should I use for the supplier request?" if not company_name else f"Is company name \"{company_name}\" correct?"
+            "What company name should I use for the supplier request?" if not company_name else f"Is company name \"{company_name}\" correct? \n <b> Enter new to update. </b> "
         ]
 
         text = "\n".join(lines)
@@ -3483,26 +3423,25 @@ class TemplateService:
 
         text = text + navigation_text
 
-        responses.append(ResponsePayload(text=text))
+        responses.append(ResponsePayload(text=text, keyboard=self.navigation_handler.get_navigation_keyboard(session)))
 
         return ResponsePayloadCollection(responses=responses)
 
 
-    def new_route_finish(self):
+    def new_route_finish(self, route: SeaRouteDB):
+        l = [
+            f"Thanks {emogye.FINE}",
+            "",
+            "I’ve got everything I need for now.",
+            "I’ll submit the request to suppliers \nand get back to you as soon as quotes are in.\n" if route.data.pdf_requested else "",
+            "If anything needs to be changed, you can always change this later — just go to",
+            "Main menu → 2."
+        ]
+
         return ResponsePayloadCollection(
             responses=[
                 ResponsePayload(
-                    text=f""" 
-Thanks {emogye.FINE}
-
-I’ve got everything I need for now.
-I’ll submit the request to suppliers
-and get back to you as soon as quotes are in.
-
-If anything needs to be changed,
-you can always change this later — just go to
-Main menu → 2.
-"""
+                    text="\n".join(l)
                 )
             ]
         )

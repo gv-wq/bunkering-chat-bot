@@ -106,7 +106,7 @@ class SearchRouteHandler:
 
             return ResponsePayloadCollection(
                 responses=[ResponsePayload(
-                    text="<b>Are you sure?\n1. Yes\n0. Cancel</b>"
+                    text=" <b> Are you sure?\n1. Yes\n0. Cancel </b> ", keyboard=self.navigation_handler.get_yes_no_keyboard()
                 )]
             )
 
@@ -142,7 +142,7 @@ class SearchRouteHandler:
         return await self.template_service.search_route_template(session)
 
     async def _handle_view(self, session: SessionDB, message: str):
-        q = message.strip()
+        q = message.strip().lower()
 
         route_id = session.data.route_search.id
         if not route_id:
@@ -162,7 +162,8 @@ class SearchRouteHandler:
             await self.db_service.update_session(session.user_id, session.current_task, session.current_step, None, session.data)
             return ResponsePayloadCollection(
                 responses=[ResponsePayload(
-                    text="<b> Are you sure?\n1. Yes\n0. Cancel\n</b>"
+                    text=" <b>Are you sure?\n1. Yes\n0. Cancel\n </b> ",
+                    keyboard=self.navigation_handler.get_yes_no_keyboard()
                 )]
             )
 

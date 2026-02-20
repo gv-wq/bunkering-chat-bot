@@ -1,48 +1,38 @@
 import re
-from typing import List, Optional
+from typing import List, Optional, Any
 from pydantic import BaseModel, Field, PrivateAttr
+from telegram import InlineKeyboardMarkup
 
-class FileObj(BaseModel):
-    name: str = Field(description="File name")
-    content: bytes = Field(description="File content")
+class MediaImage(BaseModel):
+    content: Optional[bytes] = Field(default=None, description="Raw image bytes")
+    url: Optional[str] = Field(default=None, description="Public URL of image")
+    filename: Optional[str] = Field(default=None, description="Image filename")
+
+
+class MediaFile(BaseModel):
+    content: Optional[bytes] = Field(default=None, description="Raw file bytes")
+    url: Optional[str] = Field(default=None, description="Public URL of file")
+    filename: Optional[str] = Field(description="File name with extension")
+
 
 class ResponsePayload(BaseModel):
-    text: Optional[str] = Field(default=None, description="Message text")
-    images: List[bytes] = Field(default_factory=list, description="List of image bytes")
-    files: List[FileObj] = Field(default_factory=list, description="Files to attach")
-    err: Optional[str] = Field(default=None, description="Error text")
+    text: Optional[str] = None
+    images: List[MediaImage] = []
+    files: List[MediaFile] = []
+    err: Optional[str] = None
+    keyboard: Optional[Any] = None  # WhatsApp uses interactive templates
 
-    # private attribute to store original text
-    #_original_text: Optional[str] = PrivateAttr(default=None)
-    #
-    # def __init__(self, **data):
-    #     super().__init__(**data)
-    #     # store the raw text internally
-    #     self._original_text = data.get("text", None)
+    def has_text(self):
+        return bool(self.text)
 
-    def escape_markdown_v2(self, text: str, keep_asterisk_for_format: bool = True) -> str:
-        if keep_asterisk_for_format:
-            # Escape all except * (so bold works)
-            return re.sub(r'(?<!\\)([_\[\]()~`>#+\-=|{}.!])', r'\\\1', text)
-        else:
-            # Escape everything
-            return re.sub(r'([_*\[\]()~`>#+\-=|{}.!])', r'\\\1', text)
-
-    @property
-    def escaped_text(self) -> str:
-        """Return MarkdownV2 escaped text"""
-        #if self._original_text:
-        return self.escape_markdown_v2(self.text)
-        #return ""
-
-    def has_images(self) -> bool:
+    def has_images(self):
         return bool(self.images)
 
-    def has_text(self) -> bool:
-        return bool(self.text and self.text.strip())
-
-    def has_files(self) -> bool:
+    def has_files(self):
         return bool(self.files)
+
+    def has_buttons(self):
+        return bool(self.keyboard)
 
 
 class ResponsePayloadCollection(BaseModel):

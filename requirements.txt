@@ -17,3 +17,5 @@ weasyprint
 jinja2
 
 pdfkit
+pillow
+geopandas

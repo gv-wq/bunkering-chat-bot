@@ -11,7 +11,7 @@ import asyncpg
 from psycopg2.pool import SimpleConnectionPool
 from psycopg2.extras import RealDictCursor
 
-
+from app.data.dto.main.Coordinates import Coordinates
 from app.data.dto.main.Fuel import FuelDB
 from app.data.dto.main.MabuxPortLocodeMap import MabuxPortLocodeMap, MabuxPortLocodeMapDB
 from app.data.dto.main.MabuxPortFuelPrice import MabuxPortFuelPrice, MabuxPortFuelPriceDB
@@ -24,6 +24,7 @@ from app.data.dto.main.TariffSelection import TariffSelection
 from app.data.dto.main.User import UserDB
 from app.data.dto.main.UserTariff import UserTariffBD
 from app.data.dto.searoute.SearoutePort import SearoutePort
+from app.services.utils import utils
 
 KM_PER_DEG_LAT = 111.32  # approximate km per degree latitude
 
@@ -58,19 +59,60 @@ class DbService:
         self.simple_pool = SimpleConnectionPool(1, 20, dsn)
         #self.simple_conn = self.simple_pool.getconn()
 
+    # async def create_user(
+    #     self,
+    #     telegram_id: int,
+    #     telegram_user_name: str = None,
+    #     phone_number: str = None,
+    #     first_name: str = None,
+    #     last_name: str = None,
+    #     email: str = None,
+    #     telegram_effective_chat_id: int = None
+    # ) -> Tuple[Optional[UserDB], Optional[str]]:
+    #     try:
+    #         async with self.connection_pool.acquire() as conn:
+    #             # First get the Basic tariff ID
+    #             basic_tariff = await conn.fetchrow(
+    #                 "SELECT id FROM user_tariffs WHERE name = 'Basic' AND is_active = true"
+    #             )
+    #
+    #             if not basic_tariff:
+    #                 return None, "Basic tariff not found"
+    #
+    #             # Create new user with new fields
+    #             row = await conn.fetchrow(
+    #                 """
+    #                 INSERT INTO users (
+    #                     telegram_id, telegram_user_name, phone_number,
+    #                     first_name, last_name, email, registration_date,
+    #                     current_tariff_id, free_tier_expiry, is_active, telegram_effective_chat_id
+    #                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    #                 RETURNING *
+    #             """,
+    #                 telegram_id,
+    #                 telegram_user_name,
+    #                 phone_number,
+    #                 first_name,
+    #                 last_name,
+    #                 email,
+    #                 datetime.now(),
+    #                 basic_tariff["id"],
+    #                 datetime.now(),
+    #                 True,
+    #                 telegram_effective_chat_id
+    #             )
+    #
+    #             return UserDB.from_db_row(row), None
+    #     except Exception as e:
+    #         return None, f"Error creating user: {str(e)}"
+
     async def create_user(
-        self,
-        telegram_id: int,
-        telegram_user_name: str = None,
-        phone_number: str = None,
-        first_name: str = None,
-        last_name: str = None,
-        email: str = None,
-        telegram_effective_chat_id: int = None
+            self,
+            data: dict
     ) -> Tuple[Optional[UserDB], Optional[str]]:
         try:
             async with self.connection_pool.acquire() as conn:
-                # First get the Basic tariff ID
+                # Get Basic tariff
                 basic_tariff = await conn.fetchrow(
                     "SELECT id FROM user_tariffs WHERE name = 'Basic' AND is_active = true"
                 )
@@ -78,30 +120,67 @@ class DbService:
                 if not basic_tariff:
                     return None, "Basic tariff not found"
 
-                # Create new user with new fields
+                now = datetime.now()
+                phone_number = utils.clean_phone_number(data.get("phone_number"))
+
                 row = await conn.fetchrow(
                     """
                     INSERT INTO users (
-                        telegram_id, telegram_user_name, phone_number, 
-                        first_name, last_name, email, registration_date, 
-                        current_tariff_id, free_tier_expiry, is_active, telegram_effective_chat_id
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                        telegram_id,
+                        telegram_user_name,
+                        telegram_effective_chat_id,
+
+                        whatsapp_phone,
+                        whatsapp_effective_chat,
+                        whatsapp_business_id,
+                        whatsapp_name,
+                        whatsapp_profile_pic_url,
+
+                        phone_number,
+                        first_name,
+                        last_name,
+                        email,
+
+                        registration_date,
+                        current_tariff_id,
+                        free_tier_expiry,
+                        is_active,
+                        message_count,
+                        route_count
+                    )
+                    VALUES (
+                        $1,$2,$3,
+                        $4,$5,$6,$7,$8,
+                        $9,$10,$11,$12,
+                        $13,$14,$15,$16,$17,$18
+                    )
                     RETURNING *
-                """,
-                    telegram_id,
-                    telegram_user_name,
+                    """,
+                    data.get("telegram_id"),
+                    data.get("telegram_user_name"),
+                    data.get("telegram_effective_chat_id"),
+
+                    data.get("whatsapp_phone"),
+                    data.get("whatsapp_effective_chat"),
+                    data.get("whatsapp_business_id"),
+                    data.get("whatsapp_name"),
+                    data.get("whatsapp_profile_pic_url"),
+
                     phone_number,
-                    first_name,
-                    last_name,
-                    email,
-                    datetime.now(),
+                    data.get("first_name"),
+                    data.get("last_name"),
+                    data.get("email"),
+
+                    now,
                     basic_tariff["id"],
-                    datetime.now(),
+                    now,
                     True,
-                    telegram_effective_chat_id
+                    0,
+                    0
                 )
 
                 return UserDB.from_db_row(row), None
+
         except Exception as e:
             return None, f"Error creating user: {str(e)}"
 
@@ -129,6 +208,30 @@ class DbService:
                 return UserDB.from_db_row(row), None
         except Exception as e:
             return None, str(e)
+
+    async def get_user_by_phone_number(
+            self, phone: str
+    ) -> Tuple[Optional[UserDB], Optional[str]]:
+        try:
+            normalized_phone = utils.clean_phone_number(phone)
+
+            if not normalized_phone:
+                return None, "Could not process your phone number!"
+
+            async with self.connection_pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT * FROM users WHERE phone_number = $1",
+                    normalized_phone
+                )
+
+                if not row:
+                    return None, None
+
+                return UserDB.from_db_row(row), None
+
+        except Exception as e:
+            return None, str(e)
+
 
     async def get_or_create_user(
         self, telegram_id: int, user_data: dict = None
@@ -696,6 +799,7 @@ class DbService:
 
         except Exception as e:
             return None, str(e)
+
 
     async def count_users(
             self,
@@ -1502,6 +1606,7 @@ created_at DESC
                             barge_status,
                             truck_status,
                             agent_contact_list,
+                            manual_input,
                             GREATEST(
                                 similarity(port_name, %s),
                                 similarity(country_name, %s),
@@ -1703,6 +1808,42 @@ created_at DESC
         except Exception as e:
             return [], str(e)
 
+    async def get_ports_by_list_of_country_codes(self, country_codes):
+        if not country_codes:
+            return [], None
+
+        normalized_codes = [c.strip().upper() for c in country_codes]
+
+        try:
+            async with self.connection_pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT *
+                    FROM public.ports_vector_new
+                    WHERE 
+                        LEFT(locode, 2) = ANY($1::text[])
+                        AND port_size = 'large'
+                        AND (
+                            mabux_id IS NOT NULL
+                            OR (mabux_ids IS NOT NULL AND cardinality(mabux_ids) > 0)
+                        )
+                    """,
+                    normalized_codes,
+                )
+
+            ports = [SeaPortDB.from_db_row(r) for r in rows]
+            return ports, None
+
+        except asyncpg.PostgresError as e:
+            #logger.exception("Database error while fetching ports by country codes")
+            return None, str(e)
+
+        except Exception as e:
+            #logger.exception("Unexpected error in get_ports_by_list_of_country_codes")
+            return None, str(e)
+
+
+
     async def search_ports_nearby_with_prices(
             self,
             latitude: float,
@@ -1729,7 +1870,7 @@ created_at DESC
                     mabux_id IS NOT NULL
                     OR (mabux_ids IS NOT NULL AND cardinality(mabux_ids) > 0)
                 )
-                AND port_size = 'large'
+                AND (port_size = 'large' )
                 
                 ORDER BY distance_m
                 LIMIT $4
@@ -1738,6 +1879,106 @@ created_at DESC
                 latitude,
                 radius_km,
                 n,
+            )
+
+        ports = []
+        for r in rows:
+            p = SeaPortDB.from_db_row(r)
+            setattr(p, "_distance_km", r["distance_m"] / 1000.0)
+            ports.append(p)
+
+        return ports, None
+
+    async def search_ports_within_polygon(self, polygon_wkt: str, n: int = 200):
+        try:
+            async with self.connection_pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT *,
+                           ST_Distance(
+                               geom::geography,
+                               ST_Centroid(ST_GeomFromText($1, 4326))::geography
+                           ) AS distance_m
+                    FROM public.ports_vector_new
+                    WHERE ST_Within(geom, ST_GeomFromText($1, 4326))
+                      AND (mabux_id IS NOT NULL OR (mabux_ids IS NOT NULL AND cardinality(mabux_ids) > 0))
+                      AND port_size = 'large'
+                    ORDER BY distance_m
+                    LIMIT $2
+                    """,
+                    polygon_wkt,
+                    n,
+                )
+
+            ports = []
+            for r in rows:
+                p = SeaPortDB.from_db_row(r)
+                setattr(p, "_distance_km", r["distance_m"] / 1000.0)
+                ports.append(p)
+            return ports, None
+        except Exception as e:
+            return None, str(e)
+
+    async def search_ports_along_route_inland(
+            self,
+            sea_route_coords: List[Coordinates],  # [(lon, lat), ...]
+            route_width_km: float = 20.0,
+            inland_km: float = 10.0,
+            limit: int = 200,
+    ):
+        async with self.connection_pool.acquire() as conn:
+            flat_coords = []
+            for c in sea_route_coords:
+                flat_coords.extend([c.longitude, c.latitude])
+
+            query = """
+            WITH input_points AS (
+                SELECT ST_SetSRID(
+                           ST_MakePoint(coords[i], coords[i+1]),
+                           4326
+                       ) AS geom
+                FROM generate_subscripts($1::float8[], 1) g(i),
+                     (SELECT $1::float8[] AS coords) s
+                WHERE i % 2 = 1
+            ),
+            route AS (
+                SELECT ST_MakeLine(geom) AS geom
+                FROM input_points
+            ),
+            route_buffer AS (
+                SELECT ST_Buffer(geom, $2 * 1000) AS geom
+                FROM route
+            ),
+            coastal_land AS (
+                SELECT ST_Intersection(l.geom, rb.geom) AS geom
+                FROM gis.land_polygons l
+                JOIN route_buffer rb ON l.geom && rb.geom
+            ),
+            inland_area AS (
+                SELECT ST_Buffer(geom, $3 * 1000) AS geom
+                FROM coastal_land
+            ),
+            merged_area AS (
+                SELECT ST_Union(geom) AS geom
+                FROM inland_area
+            )
+            SELECT p.*,
+                   ST_Distance(p.geom::geography, (SELECT ST_Centroid(geom)::geography FROM merged_area)) AS distance_m
+            FROM public.ports_vector_new p
+            WHERE p.geom && (SELECT geom FROM merged_area)
+              AND ST_Within(p.geom::geometry, (SELECT geom FROM merged_area))
+              AND (p.mabux_id IS NOT NULL OR (p.mabux_ids IS NOT NULL AND cardinality(p.mabux_ids) > 0))
+              AND p.port_size = 'large'
+            ORDER BY distance_m
+            LIMIT $4;
+            """
+
+            rows = await conn.fetch(
+                query,
+                flat_coords,  # $1
+                route_width_km,  # $2
+                inland_km,  # $3
+                limit  # $4
             )
 
         ports = []
@@ -1880,10 +2121,6 @@ created_at DESC
         except Exception as e:
             return None, str(e)
 
-
-
-    def mark_deleted_route_by_id(self, id):
-        pass
 
     async def create_port_from_bubble(self, port: SeaPortBubble) -> Tuple[Optional[SeaPortDB], Optional[str]]:
         try:
@@ -2183,9 +2420,6 @@ SELECT * FROM inserted;
             if not fields:
                 return None, "No fields to update"
 
-
-
-
             # build SET clause
             set_clauses = []
             values = [port_id]
@@ -2214,6 +2448,42 @@ SELECT * FROM inserted;
         except Exception as e:
             return None, f"Database error: {e}"
 
+    async def update_port(self, locode: str, fields: dict) -> Tuple[Optional[SeaPortDB], Optional[str]]:
+
+        try:
+            if not fields:
+                return None, "No fields to update"
+
+            # build SET clause
+            set_clauses = []
+            values = [locode]
+            idx = 2
+
+            for col, val in fields.items():
+                set_clauses.append(f"{col} = ${idx}")
+                values.append(val)
+                idx += 1
+
+            query = f"""
+                UPDATE public.ports_vector_new
+                SET {", ".join(set_clauses)}
+                WHERE locode = $1
+                RETURNING *
+            """
+
+            async with self.connection_pool.acquire() as conn:
+                row = await conn.fetchrow(query, *values)
+
+            if row:
+                return SeaPortDB.from_db_row(row), None
+
+            return None, "Port not found"
+
+        except Exception as e:
+            return None, f"Database error: {e}"
+
+
+
     async def update_user(self, user_id: str, update_data: dict) -> Tuple[Optional[UserDB], Optional[str]]:
         try:
             async with self.connection_pool.acquire() as conn:
@@ -2239,3 +2509,4 @@ SELECT * FROM inserted;
                 return UserDB.from_db_row(row), None
         except Exception as e:
             return None, str(e)
+

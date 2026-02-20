@@ -1,20 +1,13 @@
-import asyncio
-import math
 import re
 import random
 import time
-import datetime
 from collections import defaultdict, deque
-from typing import Dict, List, Optional, Tuple
 from uuid import UUID
 
-from app.services.utils import utils
 import math
 import asyncio
 import datetime
 from typing import List, Dict, Optional, Tuple
-from concurrent.futures import ProcessPoolExecutor
-
 
 from app.data import emogye
 from app.data.dto.main.BunkeringStep import BunkeringStep
@@ -32,16 +25,18 @@ from app.data.dto.messenger.ResponsePayload import (
 from app.data.dto.searoute.SearoutePort import SearoutePort
 from app.data.enums.RouteStep import RouteStepEnum
 from app.data.enums.RouteTask import RouteTaskEnum
-from app.handlers import navigation_handler
 from app.handlers.navigation_handler import NavigationHandler
 from app.services.ai_service import AiService
 from app.services.db_service import DbService
 from app.services.email_sender import EmailSender
-from app.services.external_api.bubble_api import BubbleApi
+
 from app.services.external_api.searoute_api import SearouteApi
 from app.services.internal_api.map_builder_api import MapBuilderApi
 from app.services.template.telegram_template_service import TemplateService
 from app.services.utils import searoute_utils, email_sender, utils
+from app.services.utils.island_projection import IslandProjection
+from app.services.utils.near_country_search import RouteCountryFinder
+
 
 class SeaRouteLimiter:
     def __init__(self, max_concurrent: int, rps: float):
@@ -63,7 +58,6 @@ class SeaRouteLimiter:
     def release(self):
         self._sem.release()
 
-
 class NewRouteHandler:
     def __init__(
         self,
@@ -72,19 +66,23 @@ class NewRouteHandler:
         template_service: TemplateService,
         navigation_handler: NavigationHandler,
         searoute_api: SearouteApi,
-        bubble_api: BubbleApi,
+        #bubble_api: BubbleApi,
         map_image_api: MapBuilderApi,
+        projector: IslandProjection,
+        country_finder: RouteCountryFinder
     ):
         self.ai_service = ai_service
         self.sql_db_service = sql_db_service
         self.template_service = template_service
         self.navigation_handler = navigation_handler
         self.searoute_api = searoute_api
-        self.bubble_api = bubble_api
+        #self.bubble_api = bubble_api
         self.map_image_api = map_image_api
         self.email_sender = EmailSender()
 
         self.searoute_limiter = SeaRouteLimiter(1, 0.6)
+        self.proj = projector
+        self.country_finder = country_finder
 
     async def handle_create_route_flow(self, session: SessionDB, message: str) -> ResponsePayloadCollection:
         """Flow создания маршрута"""
@@ -94,9 +92,6 @@ class NewRouteHandler:
 
         if session.current_step in [RouteStepEnum.DEPARTURE_PORT_SUGGESTION.value, RouteStepEnum.DESTINATION_PORT_SUGGESTION.value]:
             return  await self._handle_port_suggestion(session, route, message)
-
-        # if session.current_step in [RouteStepEnum.DEPARTURE_PORT_NEARBY.value, RouteStepEnum.DESTINATION_PORT_NEARBY.value]:
-        #     return await self._handle_port_nearby(session, route, message)
 
         elif session.current_step == RouteStepEnum.DEPARTURE_DATE.value:
             return await self._handle_departure_date(session, route, message)
@@ -170,7 +165,7 @@ class NewRouteHandler:
         if err:
             return ResponsePayloadCollection(responses=[ResponsePayload(err=err)])
 
-        finish_rc =  self.template_service.new_route_finish()
+        finish_rc =  self.template_service.new_route_finish(route)
         session, err = await self.navigation_handler.return_to_main_menu(session)
         if not err:
             menu_rc = await self.template_service.main_menu_template(session)
@@ -183,7 +178,7 @@ class NewRouteHandler:
         if err:
             return await self.template_service.session_template(session, err)
 
-        name = intent_dict.get("name", route.vessel_name)
+        name = intent_dict.get("name", user.company_name)
         if name:
             user.company_name = name
 
@@ -194,11 +189,18 @@ class NewRouteHandler:
 
     async def _confirm_company_name(self, session: SessionDB, route: SeaRouteDB, intent_dict: Dict) -> ResponsePayloadCollection:
         err_messages = []
-        if not route.vessel_name:
-            err_messages.append(f"{emogye.CROSS_RED} Add the vessel name please!")
+
+        user, err = await self.sql_db_service.get_user_by_id(session.user_id)
+        if err:
+            return await self.template_service.session_template(session, err)
+
+        name = intent_dict.get("name", user.company_name)
+
+        if not name:
+            err_messages.append(f"{emogye.CROSS_RED} Add the company name please!")
 
         if len(err_messages) > 0:
-            return await self.template_service.vessel_name_template(session, route, "\n".join(err_messages))
+            return await self.template_service.session_template(session, "\n".join(err_messages))
 
         session, err = await self.navigation_handler.return_to_main_menu(session)
         return await self.finish_route(session, route)
@@ -217,15 +219,35 @@ class NewRouteHandler:
             return await self._handle_unknown_intent(session, route, intent)
 
     async def _decline_supplier_request(self, session: SessionDB, route: SeaRouteDB, message: str) -> ResponsePayloadCollection:
+
+        route.data.quote_requested = False
+        route, err = await self.sql_db_service.update_route(route)
+        if err:
+            return ResponsePayloadCollection(responses=[ResponsePayload(err="Failed to update the route.")])
+
+        supplier_req_t = self.template_service.get_supplier_request(session, route)
+
         session, err = await self.navigation_handler.to_next_step(session)
         if err:
             return await self.template_service.session_template(session, err)
 
-        return await self.template_service.session_template(session)
+        m_r =  await self.template_service.session_template(session)
+
+        supplier_req_t.responses.extend(m_r.responses)
+
+        await self.send_bunekring_request_with_quote(session, route)
+
+        return supplier_req_t
 
     async def _confirm_supplier_request(self, session: SessionDB, route: SeaRouteDB, message: str) -> ResponsePayloadCollection:
 
-        c1 = await self.template_service.supplier_prices_template(session, route, status=True)
+        route.data.quote_requested = True
+        route, err = await self.sql_db_service.update_route(route)
+        if err:
+            return ResponsePayloadCollection(responses=[ResponsePayload(err="Failed to update the route.")])
+
+
+        #c1 = await self.template_service.supplier_prices_template(session, route, status=True)
 
         session, err = await self.navigation_handler.to_next_step(session)
         if err:
@@ -233,16 +255,20 @@ class NewRouteHandler:
 
         user_db, err = await self.sql_db_service.get_user_by_id(session.user_id)
 
+        supplier_req_t = self.template_service.get_supplier_request(session, route)
+
         c2 = None
-        if session.current_step == RouteStepEnum.COMPANY_NAME.value and user_db.company_name:
-            c2 = await self.finish_route(session, route)
-        else:
-            c2 = await self.template_service.session_template(session)
+        #if session.current_step == RouteStepEnum.COMPANY_NAME.value and user_db.company_name:
+        #    c2 = await self.finish_route(session, route)
+        #else:
+        c2 = await self.template_service.session_template(session)
 
         if c2:
-            c1.responses.extend(c2.responses)
+            supplier_req_t.responses.extend(c2.responses)
 
-        return c1
+        await self.send_bunekring_request_with_quote(session, route)
+
+        return supplier_req_t
 
     async def _handle_user_email(self, session: SessionDB, route: SeaRouteDB, message: str) -> ResponsePayloadCollection:
         intent_dict, err = self.ai_service.parse_user_email(message)
@@ -287,7 +313,7 @@ class NewRouteHandler:
         if len(err_messages) > 0:
             return await self.template_service.session_template(session,"\n".join(err_messages))
 
-        file_to_attach = await self.send_bunkering_request_if_needed(session, route)
+        file_to_attach = await self.render_bukering_request_in_pdf(session, route)
 
         p1 = await self.template_service.user_email_template(session, route, True)
         if file_to_attach:
@@ -315,13 +341,27 @@ class NewRouteHandler:
             return await self._handle_unknown_intent(session, route, intent)
 
     async def _decline_pdf(self, session: SessionDB, route: SeaRouteDB, message: str) -> ResponsePayloadCollection:
-        session, err = await self.navigation_handler.to_next_step(session)
+
+        route.data.pdf_requested = False
+        route, err = await self.sql_db_service.update_route(route)
+        if err:
+            return ResponsePayloadCollection(responses=[ResponsePayload(err="Failed to update the route.")])
+
+
+        session.current_step = RouteStepEnum.COMPANY_NAME.value
+        session, err = await self.sql_db_service.update_session(session.user_id, session.current_task, session.current_step, session.route_id, session.data)
         if err:
             return await self.template_service.session_template(session, err)
 
         return await self.template_service.session_template(session, err)
 
     async def _confirm_pdf(self, session: SessionDB, route: SeaRouteDB, message: str) -> ResponsePayloadCollection:
+
+        route.data.pdf_requested = True
+        route, err = await self.sql_db_service.update_route(route)
+        if err:
+            return ResponsePayloadCollection(responses=[ResponsePayload(err="Failed to update the route.")])
+
         session, err = await self.navigation_handler.to_next_step(session)
         if err:
             return await self.template_service.session_template(session, err)
@@ -431,15 +471,6 @@ class NewRouteHandler:
         finally:
             self.searoute_limiter.release()
 
-    def collect_missing_locodes(self, candidate, suggestions, nearby_ports):
-        locodes = set()
-
-        for p in [candidate, *suggestions, *nearby_ports]:
-            if p and not p.port_size:
-                locodes.add(p.locode)
-
-        return locodes
-
     async def fetch_ports_info(self, locodes: set[str]) -> dict[str, SearoutePort]:
         tasks = {
             locode: asyncio.create_task(self.get_port_info_limited(locode))
@@ -498,7 +529,7 @@ class NewRouteHandler:
 
         if candidate:
             # 1. SeaRoute nearby
-            searoute_nearby, _ = await self.searoute_api.get_nearest_port_to_coordinates(candidate.latitude, candidate.longitude, {"limit": 50}, )
+            searoute_nearby, _ = await self.searoute_api.get_nearest_port_to_coordinates(candidate.latitude, candidate.longitude, {"limit": 25}, )
             searoute_nearby = searoute_nearby or []
 
             # 2. Bulk DB fetch
@@ -522,7 +553,7 @@ class NewRouteHandler:
             nearby_bd, _ = await self.sql_db_service.search_ports_nearby(
                 candidate.latitude,
                 candidate.longitude,
-                100,
+                10,
                 5000,
             )
             nearby_bd = nearby_bd or []
@@ -569,6 +600,8 @@ class NewRouteHandler:
             if candidate and all_ports:
                 suggestions = [p for p in all_ports if p.locode != candidate.locode]
 
+        suggestions = suggestions[:5]
+
 
         port_size_priority = {"large": 0, "small": 1, "tiny": 2, None: 3}
         suggestions.sort(key=lambda p: port_size_priority.get(p.port_size, 3))
@@ -591,133 +624,6 @@ class NewRouteHandler:
 
         return await self.template_service.port_suggestions_template(session, route)
 
-    #
-    #
-    # async def update_port_suggestion(self, session: SessionDB, route: SeaRouteDB, intent: Dict):
-    #     candidate = None
-    #     suggestions: List[SeaPortDB] = []
-    #     #image = None
-    #
-    #     if session.current_step == RouteStepEnum.DEPARTURE_PORT_SUGGESTION.value:
-    #         candidate = route.data.port_selection.departure_candidate
-    #         suggestions = route.data.port_selection.departure_suggestions
-    #     elif session.current_step == RouteStepEnum.DESTINATION_PORT_SUGGESTION.value:
-    #         candidate = route.data.port_selection.destination_candidate
-    #         suggestions = route.data.port_selection.destination_suggestions
-    #
-    #
-    #     if intent['type'] == 'name':
-    #         candidate = None
-    #         suggestions = []
-    #         candidate, suggestions, err = self.sql_db_service.search_port_with_suggestions(intent['query'])
-    #         # if all([not err, new_candidate, new_suggestions]):
-    #         #     candidate = new_candidate
-    #         #     suggestions = new_suggestions
-    #
-    #
-    #     elif intent['type'] == 'index':
-    #         new_candidate = self._resolve_port_by_index(suggestions, intent['index'])
-    #         if new_candidate:
-    #             candidate, suggestions, err = self.sql_db_service.search_port_with_suggestions(new_candidate.locode)
-    #         # else:
-    #         #     candidate = None
-    #         #     suggestions = []
-    #
-    #
-    #     if candidate:
-    #         if not candidate.port_size:
-    #             searoute_port_r, err = await self.searoute_api.get_port_info(candidate.locode)
-    #             if searoute_port_r and not err:
-    #                 port_db, port_db_err = await self.sql_db_service.upsert_port_size_from_searoute(searoute_port_r)
-    #                 if port_db and not port_db_err:
-    #                     candidate = port_db
-    #
-    #         db_ports = []
-    #
-    #         # ---- searoute ports ---
-    #         searoute_nearby, searoute_err = await self.searoute_api.get_nearest_port_to_coordinates(candidate.latitude, candidate.longitude, {"limit": 50})
-    #         if searoute_nearby and not searoute_err:
-    #             for searoute_port in searoute_nearby:
-    #                 db_port, db_port_err = await self.sql_db_service.get_port_by_locode(searoute_port.locode)
-    #                 if not db_port_err and not db_port.port_size:
-    #                     new_db_port, new_err = await self.sql_db_service.upsert_port_size_from_searoute(searoute_port)
-    #                     if new_db_port:
-    #                         db_ports.append(new_db_port)
-    #                 else:
-    #                     db_ports.append(db_port)
-    #
-    #         # local db ports
-    #         nearby_bd, db_err = await self.sql_db_service.search_ports_nearby(candidate.latitude, candidate.longitude, 100, 5000)
-    #         if nearby_bd and not db_err:
-    #             db_ports.extend(nearby_bd)
-    #
-    #         db_ports = utils.unique_ports(db_ports)
-    #         synced_ports = []
-    #         # sync all ports size
-    #         for port in db_ports:
-    #             if port.port_size:
-    #                 synced_ports.append(port)
-    #                 continue
-    #
-    #             time.sleep(random.uniform(0.3, 1.4))
-    #             searoute_port_r, err = await self.searoute_api.get_port_info(port.locode)
-    #             if not searoute_port_r and err:
-    #                 continue
-    #
-    #             updated_db_port, err = await self.sql_db_service.upsert_port_size_from_searoute(searoute_port_r)
-    #             if updated_db_port and not err:
-    #                 synced_ports.append(updated_db_port)
-    #
-    #         large_ports = [p for p in synced_ports if p.port_size == "large"]
-    #         nearby = utils.unique_ports(large_ports)
-    #         if candidate and len(nearby) > 0:
-    #             nearby = [p for p in nearby if p.locode != candidate.locode]
-    #         nearby.extend(suggestions)
-    #
-    #         suggestions = nearby
-    #
-    #
-    #
-    #     suggestion_with_port_size = []
-    #     for suggestion in suggestions:
-    #         if suggestion.port_size:
-    #             suggestion_with_port_size.append(suggestion)
-    #             continue
-    #
-    #         time.sleep(random.uniform(0.3, 1.4))
-    #         suggestion_info, suggestion_err = await self.searoute_api.get_port_info(suggestion.locode)
-    #         if suggestion_err and not suggestion_info:
-    #             suggestion_with_port_size.append(suggestion)
-    #             continue
-    #
-    #         suggestion_updated, err =  await self.sql_db_service.upsert_port_size_from_searoute(suggestion_info)
-    #         if not suggestion_updated and not err:
-    #             suggestion_with_port_size.append(suggestion)
-    #             continue
-    #
-    #         suggestion_with_port_size.append(suggestion_updated)
-    #
-    #     unique_ports = utils.unique_ports(suggestion_with_port_size)
-    #     port_size_priority = {"large": 0, "small": 1, "tiny": 2, None: 3}
-    #     suggestions.sort(key=lambda p: port_size_priority.get(p.port_size, 3))
-    #     #suggestions = sorted(unique_ports, key = lambda x : x.port_size == "large", reverse=True)
-    #     if candidate and len(suggestions) > 0:
-    #         suggestions = [p for p in suggestions if p.locode != candidate.locode]
-    #
-    #     if session.current_step == RouteStepEnum.DEPARTURE_PORT_SUGGESTION.value:
-    #         route.data.port_selection.departure_candidate = candidate
-    #         route.data.port_selection.departure_suggestions = suggestions
-    #         #route.departure_suggestion_image = image
-    #     elif session.current_step == RouteStepEnum.DESTINATION_PORT_SUGGESTION.value:
-    #         route.data.port_selection.destination_candidate = candidate
-    #         route.data.port_selection.destination_suggestions = suggestions
-    #         #route.destination_suggestion_image = image
-    #
-    #     route, err = await self.sql_db_service.update_route(route)
-    #     if err:
-    #         return ResponsePayloadCollection(responses=[ResponsePayload(err=str(err))])
-    #
-    #     return await self.template_service.port_suggestions_template(session, route)
 
     def _resolve_port_by_index(self, suggestions: List[SeaPortDB], index: int) -> Optional[SeaPortDB]:
         if not suggestions or index is None:
@@ -730,67 +636,24 @@ class NewRouteHandler:
     async def confirm_port_suggestion(self, session: SessionDB, route: SeaRouteDB, intent: Dict):
 
         candidate = None
+        port_id = None
         nearby = []
         port_type_name = ""
 
         if session.current_step == RouteStepEnum.DEPARTURE_PORT_SUGGESTION.value:
             candidate = route.data.port_selection.departure_candidate
             port_type_name = "departure"
+            port_id = route.departure_port_id
         elif session.current_step == RouteStepEnum.DESTINATION_PORT_SUGGESTION.value:
             candidate = route.data.port_selection.destination_candidate
             port_type_name = "destination"
+            port_id = route.destination_port_id
 
-        if candidate is None:
+        if candidate is None and port_id is None:
             return await self.template_service.port_suggestions_template(session, route, f"{emogye.CROSS_GRAY} Firstly select {port_type_name} port.")
-
-        #
-        # if candidate:
-        #     db_ports = []
-        #
-        #     # ---- searoute ports ---
-        #     searoute_nearby, searoute_err = await self.searoute_api.get_nearest_port_to_coordinates(candidate.latitude, candidate.longitude, {"limit": 50})
-        #     if searoute_nearby and not searoute_err:
-        #         for searoute_port in searoute_nearby:
-        #             db_port, db_port_err = await self.sql_db_service.get_port_by_locode(searoute_port.locode)
-        #             if not db_port:
-        #                 new_db_port, new_err = await self.sql_db_service.upsert_port_size_from_searoute(searoute_port)
-        #                 if new_db_port:
-        #                     db_ports.append(new_db_port)
-        #             else:
-        #                 db_ports.append(db_port)
-        #
-        #
-        #     # local db ports
-        #     nearby_bd, db_err = await self.sql_db_service.search_ports_nearby(candidate.latitude, candidate.longitude, 20)
-        #     if nearby_bd and not db_err:
-        #         db_ports.extend(nearby_bd)
-        #
-        #     db_ports = utils.unique_ports(db_ports)
-        #     synced_ports = []
-        #     # sync all ports size
-        #     for port in db_ports:
-        #         if port.port_size:
-        #             synced_ports.append(port)
-        #             continue
-        #
-        #         time.sleep(random.uniform(0.3, 1.4))
-        #         searoute_port_r, err = await self.searoute_api.get_port_info(port.locode)
-        #         if not searoute_port_r and err:
-        #             continue
-        #
-        #         updated_db_port, err = await self.sql_db_service.upsert_port_size_from_searoute(searoute_port_r)
-        #         if updated_db_port and not err:
-        #             synced_ports.append(updated_db_port)
-        #
-        #
-        #     large_ports = [p for p in synced_ports if p.port_size == "large"]
-        #     nearby = utils.unique_ports(large_ports)
-        #     if candidate and len(nearby) > 0:
-        #         nearby = [p for p in nearby if p.locode != candidate.locode]
 
         if session.current_step == RouteStepEnum.DEPARTURE_PORT_SUGGESTION.value:
             route.departure_port_id = candidate.id if candidate else None
-            #route.departure_nearby_image = image
             route.data.port_selection.departure_candidate = candidate
             route.data.port_selection.departure_suggestions = nearby if nearby else None
 
@@ -798,7 +661,6 @@ class NewRouteHandler:
             route.destination_port_id = candidate.id if candidate else None
             route.data.port_selection.destination_candidate = candidate
             route.data.port_selection.destination_suggestions = nearby if nearby else None
-            #route.destination_nearby_image = image
 
         updated_route, err = await self.sql_db_service.update_route(route)
         if err:
@@ -807,7 +669,7 @@ class NewRouteHandler:
             )
         session, err = await self.navigation_handler.to_next_step(session)
         if err:
-            return ResponsePayloadCollection(responses=[ResponsePayload(err="Failed to save user session")])
+            return ResponsePayloadCollection(responses=[ResponsePayload(err=f"Failed to save user session: {err}")])
 
         if session.current_step == RouteStepEnum.DEPARTURE_DATE.value:
             return await self.template_service.departure_date_template(session, route)
@@ -816,152 +678,6 @@ class NewRouteHandler:
             return await self.template_service.port_suggestions_template(session, route)
 
         return await self._handle_unknown_intent(session, route, "Could not parse the intent")
-
-
-    async def _handle_port_nearby(self, session: SessionDB, route: SeaRouteDB, message: str) -> ResponsePayloadCollection:
-        ports = []
-        if session.current_step == RouteStepEnum.DEPARTURE_PORT_NEARBY.value:
-            ports = route.data.port_selection.departure_nearby or []
-        elif session.current_step == RouteStepEnum.DESTINATION_PORT_NEARBY.value:
-            ports = route.data.port_selection.destination_nearby or []
-
-
-        intent, err = self.ai_service.find_best_match(message, ports)
-
-        action = intent['action']
-        if action == "update":
-            return await self.update_port_nearby(session, route, intent)
-        elif action == "confirm":
-            return await self.confirm_port_nearby(session, route, intent)
-        else:
-            return await self._handle_unknown_intent(session, route, intent)
-
-
-    async def update_port_nearby(self, session: SessionDB, route: SeaRouteDB, intent: Dict):
-        candidate = None
-        nearby: List[SeaPortDB] = []
-       # image = None
-
-        if session.current_step == RouteStepEnum.DEPARTURE_PORT_NEARBY.value:
-            candidate = route.data.port_selection.departure_candidate
-            nearby = route.data.port_selection.departure_nearby or []
-            #image = route.departure_nearby_image
-        elif session.current_step == RouteStepEnum.DESTINATION_PORT_NEARBY.value:
-            candidate = route.data.port_selection.destination_candidate
-            nearby = route.data.port_selection.destination_nearby or []
-            #image = route.destination_nearby_image
-
-        route.departure_nearby_image = None
-        route.destination_nearby_image = None
-        route, err = await self.sql_db_service.update_route(route)
-        if err:
-            return ResponsePayloadCollection(responses=[ResponsePayload(err=str(err))])
-
-
-        if intent['type'] == 'index':
-            new_candidate = self._resolve_port_by_index(nearby, intent['index'])
-            if new_candidate:
-                candidate = new_candidate
-
-        if candidate:
-            db_ports = []
-
-            # ---- searoute ports ---
-            searoute_nearby, searoute_err = await self.searoute_api.get_nearest_port_to_coordinates(candidate.latitude, candidate.longitude, {"limit": 50})
-            if searoute_nearby and not searoute_err:
-                for searoute_port in searoute_nearby:
-                    db_port, db_port_err = await self.sql_db_service.get_port_by_locode(searoute_port.locode)
-                    if not db_port_err and not db_port.port_size:
-                        new_db_port, new_err = await self.sql_db_service.upsert_port_size_from_searoute(searoute_port)
-                        if new_db_port:
-                            db_ports.append(new_db_port)
-                    else:
-                        db_ports.append(db_port)
-
-            # local db ports
-            nearby_bd, db_err = await self.sql_db_service.search_ports_nearby(candidate.latitude, candidate.longitude, 100, 1000)
-            if nearby_bd and not db_err:
-                db_ports.extend(nearby_bd)
-
-            db_ports = utils.unique_ports(db_ports)
-            synced_ports = []
-            # sync all ports size
-            for port in db_ports:
-                if port.port_size:
-                    synced_ports.append(port)
-                    continue
-
-                time.sleep(random.uniform(0.3, 1.4))
-                searoute_port_r, err = await self.searoute_api.get_port_info(port.locode)
-                if not searoute_port_r and err:
-                    continue
-
-                updated_db_port, err = await self.sql_db_service.upsert_port_size_from_searoute(searoute_port_r)
-                if updated_db_port and not err:
-                    synced_ports.append(updated_db_port)
-
-            large_ports = [p for p in synced_ports if p.port_size == "large"]
-            nearby = utils.unique_ports(large_ports)
-            if candidate and len(nearby) > 0:
-                nearby = [p for p in nearby if p.locode != candidate.locode]
-
-        if session.current_step == RouteStepEnum.DEPARTURE_PORT_NEARBY.value:
-            route.data.port_selection.departure_candidate = candidate
-            route.data.port_selection.departure_nearby = nearby
-            #route.departure_nearby_image = image
-        elif session.current_step == RouteStepEnum.DESTINATION_PORT_NEARBY.value:
-            route.data.port_selection.destination_candidate = candidate
-            route.data.port_selection.destination_nearby = nearby
-            #route.destination_nearby_image = image
-
-        route, err = await self.sql_db_service.update_route(route)
-        if err:
-            return ResponsePayloadCollection(responses=[ResponsePayload(err=str(err))])
-
-        return await self.template_service.port_nearby_template(session, route)
-
-
-    async def confirm_port_nearby(self, session: SessionDB, route: SeaRouteDB, intent: Dict):
-
-        candidate = None
-        port_type_name = ""
-
-        if session.current_step == RouteStepEnum.DEPARTURE_PORT_NEARBY.value:
-            candidate = route.data.port_selection.departure_candidate
-        elif session.current_step == RouteStepEnum.DESTINATION_PORT_NEARBY.value:
-            candidate = route.data.port_selection.destination_candidate
-
-        if candidate is None:
-            return await self.template_service.port_nearby_template(session, route, f"❌ Firstly confirm the {port_type_name} port")
-
-        if session.current_step == RouteStepEnum.DEPARTURE_PORT_NEARBY.value:
-            route.departure_port_id = candidate.id if candidate else None
-        elif session.current_step == RouteStepEnum.DESTINATION_PORT_NEARBY.value:
-            route.destination_port_id = candidate.id if candidate else None
-
-        if route.departure_port_id and route.destination_port_id:
-            if route.departure_port_id == route.destination_port_id:
-                return await self.template_service.port_nearby_template(session, route, "❌ Departure and destination must be different!")
-
-        updated_route, err = await self.sql_db_service.update_route(route)
-        if err:
-            return ResponsePayloadCollection(
-                responses=[ResponsePayload(err=f"Failed to save route ports: {err}")]
-            )
-        session, err = await self.navigation_handler.to_next_step(session)
-        if err:
-            return ResponsePayloadCollection(responses=[ResponsePayload(err="Failed to save user session")])
-
-        if session.current_step == RouteStepEnum.DEPARTURE_DATE.value:
-            return await self.template_service.departure_date_template(session, route)
-
-        if session.current_step in [RouteStepEnum.DESTINATION_PORT_SUGGESTION.value, RouteStepEnum.DEPARTURE_PORT_SUGGESTION.value]:
-            return await self.template_service.port_suggestions_template(session, route)
-        if session.current_step in [RouteStepEnum.DESTINATION_PORT_NEARBY.value, RouteStepEnum.DEPARTURE_PORT_NEARBY.value]:
-            return await self.template_service.port_nearby_template(session, route)
-        return await self._handle_unknown_intent(session, route, "Col not parse the situation")
-
-
 
     async def _update_session(self, session: SessionDB, user_id: UUID):
         """Helper to update session"""
@@ -991,7 +707,7 @@ class NewRouteHandler:
             return await self._handle_departure_date_update(session, route, intent)
         elif status == "confirm":
             session, err = await self.navigation_handler.to_next_step(session)
-            return await self.template_service.average_speed_template(session, route)
+            return await self.template_service.session_template(session, err if err else None)
         else:
             return await self._handle_ai_date_unknown(session, route, intent)
 
@@ -1051,36 +767,6 @@ class NewRouteHandler:
             session, route, "❌ Please, follow examples.\n"
         )
 
-    # async def _handle_average_speed(
-    #     self, session: SessionDB, route: SeaRouteDB, message: str
-    # ):
-    #     try:
-    #         speed_str = message.strip().lower().replace(",", ".")
-    #         speed = float(speed_str)
-    #         if 0.1 <= speed <= 30:
-    #
-    #             route.average_speed = speed
-    #             route, err = await self.sql_db_service.update_route(route)
-    #
-    #             if err:
-    #                 return await self.template_service.average_speed_template(
-    #                     session, route, "❌ Vessel speed bounds: 0.1 <= x <= 30"
-    #                 )
-    #             session, err = await self.navigation_handler.to_next_step(session)
-    #             return await self.template_service.route_build_confirmation_request_template(
-    #                 session, route
-    #             )
-    #         else:
-    #             return await self.template_service.average_speed_template(
-    #                 session, route, "❌ Speed must be between 0.1 and 30 knots"
-    #             )
-    #
-    #     except ValueError:
-    #         return self.template_service.average_speed_template(
-    #             session,
-    #             route,
-    #             "❌ Please enter a valid speed number (e.g., 12.5 or 14,3)",
-    #         )
 
     async def _handle_average_speed(self, session: SessionDB, route: SeaRouteDB, message: str):
 
@@ -1102,7 +788,7 @@ class NewRouteHandler:
             route, err = await self.sql_db_service.update_route(route)
             if err:
                 return await self.template_service.average_speed_template(session, route, err)
-            return await self.template_service.average_speed_template(session, route, "Confirm vessel speed value")
+            return await self.template_service.average_speed_template(session, route, )
 
         elif status == "confirm":
             if not route.average_speed_kts:
@@ -1221,14 +907,6 @@ class NewRouteHandler:
 
 
 
-
-    # -----------------------------------------------------------------------------------
-
-
-    # -------------------- utils --------------------
-
-
-
     # -------------------- fuel prices --------------------
 
     async def find_fuel_price(
@@ -1267,6 +945,7 @@ class NewRouteHandler:
             port,
             fuels: list,
             price_date: datetime.date,
+            take_anyway: List[str],
             semaphore: asyncio.Semaphore,
     ) -> Optional[Dict]:
         async with semaphore:
@@ -1297,8 +976,8 @@ class NewRouteHandler:
                     "quantity": None,
                 }
 
-            if prices_count == 0:
-                return None
+            #if prices_count == 0 and not port.locode in take_anyway:
+            #    return None
 
             return {
                 "port": port,
@@ -1370,13 +1049,13 @@ class NewRouteHandler:
                             seen[p.locode] = p
 
 
-        coords = [[Coordinates(
-            latitude=wp.latitude,
-            longitude=wp.longitude,
-        ) for wp in sea_route.waypoints]]
-        tasks = [process_chunk(c) for c in coords ]
+        # coords = [[Coordinates(
+        #     latitude=wp.latitude,
+        #     longitude=wp.longitude,
+        # ) for wp in sea_route.waypoints]]
+        # tasks = [process_chunk(c) for c in coords]
 
-        #tasks = [ process_chunk(chunk) for chunk in utils.chunk_coords(sea_route.seaRouteCoordinates, step, chunk_size)]
+        tasks = [ process_chunk(chunk) for chunk in utils.chunk_coords(sea_route.seaRouteCoordinates, step, chunk_size)]
 
         await asyncio.gather(*tasks)
 
@@ -1504,8 +1183,10 @@ class NewRouteHandler:
             ports: List,
             fuels: list,
             price_date: datetime.date,
+            take_anyway : List[str],
             max_concurrency: int = 40,
             steps_limit: int = 20,
+
     ) -> List[Dict]:
         semaphore = asyncio.Semaphore(max_concurrency)
 
@@ -1514,6 +1195,7 @@ class NewRouteHandler:
                 port=p,
                 fuels=fuels,
                 price_date=price_date,
+                take_anyway=take_anyway,
                 semaphore=semaphore,
             )
             for p in ports
@@ -1706,7 +1388,123 @@ class NewRouteHandler:
 
         return selected
 
-    from collections import defaultdict, deque
+
+
+    # def select_ports_zigzag2(
+    #         self,
+    #         steps_dicts: list,
+    #         departure_port,
+    #         destination_port,
+    #         max_ports: int = 20,
+    #         max_per_country: int = 2,
+    #         top_n_marked: int = 3,
+    # ):
+    #     """
+    #     Efficient three-phase selection with center-out zigzag, guaranteed departure/destination,
+    #     and marking top_n_marked cheapest per port.
+    #     """
+    #
+    #     # ---------- helpers ----------
+    #     def country_of(step):
+    #         return step["port"].country_name or "unknown"
+    #
+    #     # Initialize selected list and country counts
+    #     selected = []
+    #     country_counts = defaultdict(int)
+    #
+    #     # Map port_id -> list of steps for marking later
+    #     port_to_steps = defaultdict(list)
+    #     for step in steps_dicts:
+    #         port_to_steps[step["port"].id].append(step)
+    #
+    #     # ---------- Include departure and destination ----------
+    #     dep_dest_ids = {departure_port.id, destination_port.id}
+    #     for step in steps_dicts:
+    #         if step["port"].id in dep_dest_ids:
+    #             selected.append(step)
+    #             country_counts[country_of(step)] += 1
+    #
+    #     # ---------- Phase 1: cheapest per country ----------
+    #     steps_by_price = sorted(
+    #         [s for s in steps_dicts if s["port"].id not in dep_dest_ids],
+    #         key=lambda s: s["prices_sum"]
+    #     )
+    #
+    #     for step in steps_by_price:
+    #         country = country_of(step)
+    #         if country_counts[country] < max_per_country:
+    #             selected.append(step)
+    #             country_counts[country] += 1
+    #         if len(selected) >= min(12, max_ports):
+    #             break
+    #
+    #     # ---------- Phase 2: center-out zig-zag ----------
+    #     remaining = [s for s in steps_dicts if s not in selected]
+    #     remaining.sort(key=lambda s: s["distance"])
+    #     remaining_deque = deque(remaining)
+    #
+    #     toggle = True
+    #     while remaining_deque and len(selected) < max_ports:
+    #         step = remaining_deque.popleft() if toggle else remaining_deque.pop()
+    #         country = country_of(step)
+    #         if country_counts[country] < max_per_country:
+    #             selected.append(step)
+    #             country_counts[country] += 1
+    #         toggle = not toggle
+    #
+    #     # ---------- Phase 3: round-robin per country & zigzag again ----------
+    #     if len(selected) < max_ports:
+    #         # Pre-sort steps per country by price once
+    #         by_country = {
+    #             country: sorted(
+    #                 [s for s in steps_dicts if s not in selected and country_of(s) == country],
+    #                 key=lambda s: s["prices_sum"]
+    #             )
+    #             for country in set(country_of(s) for s in steps_dicts)
+    #         }
+    #
+    #         added = True
+    #         while len(selected) < max_ports and added:
+    #             added = False
+    #             for country, steps_list in by_country.items():
+    #                 if len(selected) >= max_ports:
+    #                     break
+    #                 if country_counts[country] >= max_per_country or not steps_list:
+    #                     continue
+    #                 step = steps_list.pop(0)  # already sorted by price
+    #                 selected.append(step)
+    #                 country_counts[country] += 1
+    #                 added = True
+    #
+    #             # zigzag on remaining globally
+    #             remaining_zig = [s for s in steps_dicts if s not in selected]
+    #             remaining_zig.sort(key=lambda s: s["distance"])
+    #             remaining_zig_deque = deque(remaining_zig)
+    #             toggle = True
+    #             while remaining_zig_deque and len(selected) < max_ports:
+    #                 step = remaining_zig_deque.popleft() if toggle else remaining_zig_deque.pop()
+    #                 country = country_of(step)
+    #                 if country_counts[country] < max_per_country:
+    #                     selected.append(step)
+    #                     country_counts[country] += 1
+    #                 toggle = not toggle
+    #
+    #     # ---------- Mark ports with 3 cheapest prices ----------
+    #     all_prices = [(s["prices_sum"], s["port"]) for s in steps_dicts if s.get("prices_sum") is not None]
+    #     all_prices.sort(key=lambda x: x[0])
+    #     cheapest_three_prices = {p for p, _ in all_prices[:3]}  # take 3 lowest prices
+    #
+    #     # mark ports that appear in the top 3 prices
+    #     for s in steps_dicts:
+    #         if s.get("prices_sum") in cheapest_three_prices:
+    #             s['marked'] = True
+    #
+    #     # ---------- Final sort by distance ----------
+    #     selected.sort(key=lambda s: s["distance"])
+    #
+    #     return selected
+
+
 
     def select_ports_zigzag2(
             self,
@@ -1718,111 +1516,172 @@ class NewRouteHandler:
             top_n_marked: int = 3,
     ):
         """
-        Efficient three-phase selection with center-out zigzag, guaranteed departure/destination,
-        and marking top_n_marked cheapest per port.
+        Selection rules:
+
+        - manual_input=True ports:
+            * ignore ALL limits
+            * always included
+
+        - other ports:
+            * respect max_ports
+            * respect max_per_country
+
+        - departure & destination always included
+        - no duplicates
+        - cheapest ports marked
         """
 
-        # ---------- helpers ----------
         def country_of(step):
             return step["port"].country_name or "unknown"
 
-        # Initialize selected list and country counts
+        def distance_of(step):
+            return step.get("distance") or step.get("_distance_km") or float("inf")
+
         selected = []
+        selected_ids = set()
         country_counts = defaultdict(int)
 
-        # Map port_id -> list of steps for marking later
-        port_to_steps = defaultdict(list)
+        # ---------------------------------------------------
+        # 1️⃣ Add ALL manual ports (ignore limits completely)
+        # ---------------------------------------------------
         for step in steps_dicts:
-            port_to_steps[step["port"].id].append(step)
+            if getattr(step["port"], "manual_input", False):
+                port_id = step["port"].id
+                if port_id not in selected_ids:
+                    selected.append(step)
+                    selected_ids.add(port_id)
+                    # DO NOT count toward country limits
 
-        # ---------- Include departure and destination ----------
+        # ---------------------------------------------------
+        # 2️⃣ Add departure & destination (respect country count only if not manual)
+        # ---------------------------------------------------
         dep_dest_ids = {departure_port.id, destination_port.id}
+
         for step in steps_dicts:
-            if step["port"].id in dep_dest_ids:
+            port_id = step["port"].id
+            if port_id in dep_dest_ids and port_id not in selected_ids:
                 selected.append(step)
-                country_counts[country_of(step)] += 1
+                selected_ids.add(port_id)
 
-        # ---------- Phase 1: cheapest per country ----------
-        steps_by_price = sorted(
-            [s for s in steps_dicts if s["port"].id not in dep_dest_ids],
-            key=lambda s: s["prices_sum"]
-        )
+                if not getattr(step["port"], "manual_input", False):
+                    country_counts[country_of(step)] += 1
 
-        for step in steps_by_price:
-            country = country_of(step)
-            if country_counts[country] < max_per_country:
-                selected.append(step)
-                country_counts[country] += 1
-            if len(selected) >= min(12, max_ports):
+        # ---------------------------------------------------
+        # 3️⃣ Select NON-manual ports with limits
+        # ---------------------------------------------------
+        remaining = [
+            s for s in steps_dicts
+            if s["port"].id not in selected_ids
+               and not getattr(s["port"], "manual_input", False)
+        ]
+
+        # Phase 1 — cheapest first (country limited)
+        remaining.sort(key=lambda s: s.get("prices_sum") or float("inf"))
+
+        for step in remaining:
+            if len([s for s in selected if not getattr(s["port"], "manual_input", False)]) >= max_ports:
                 break
 
-        # ---------- Phase 2: center-out zig-zag ----------
-        remaining = [s for s in steps_dicts if s not in selected]
-        remaining.sort(key=lambda s: s["distance"])
-        remaining_deque = deque(remaining)
-
-        toggle = True
-        while remaining_deque and len(selected) < max_ports:
-            step = remaining_deque.popleft() if toggle else remaining_deque.pop()
             country = country_of(step)
             if country_counts[country] < max_per_country:
                 selected.append(step)
+                selected_ids.add(step["port"].id)
                 country_counts[country] += 1
-            toggle = not toggle
 
-        # ---------- Phase 3: round-robin per country & zigzag again ----------
-        if len(selected) < max_ports:
-            # Pre-sort steps per country by price once
-            by_country = {
-                country: sorted(
-                    [s for s in steps_dicts if s not in selected and country_of(s) == country],
-                    key=lambda s: s["prices_sum"]
+        # Phase 2 — zigzag by distance
+        if len([s for s in selected if not getattr(s["port"], "manual_input", False)]) < max_ports:
+
+            remaining = [
+                s for s in steps_dicts
+                if s["port"].id not in selected_ids
+                   and not getattr(s["port"], "manual_input", False)
+            ]
+
+            remaining.sort(key=distance_of)
+            dq = deque(remaining)
+            toggle = True
+
+            while dq:
+                non_manual_count = len(
+                    [s for s in selected if not getattr(s["port"], "manual_input", False)]
                 )
-                for country in set(country_of(s) for s in steps_dicts)
-            }
+                if non_manual_count >= max_ports:
+                    break
 
-            added = True
-            while len(selected) < max_ports and added:
-                added = False
-                for country, steps_list in by_country.items():
-                    if len(selected) >= max_ports:
-                        break
-                    if country_counts[country] >= max_per_country or not steps_list:
-                        continue
-                    step = steps_list.pop(0)  # already sorted by price
+                step = dq.popleft() if toggle else dq.pop()
+                country = country_of(step)
+
+                if country_counts[country] < max_per_country:
                     selected.append(step)
+                    selected_ids.add(step["port"].id)
                     country_counts[country] += 1
-                    added = True
 
-                # zigzag on remaining globally
-                remaining_zig = [s for s in steps_dicts if s not in selected]
-                remaining_zig.sort(key=lambda s: s["distance"])
-                remaining_zig_deque = deque(remaining_zig)
-                toggle = True
-                while remaining_zig_deque and len(selected) < max_ports:
-                    step = remaining_zig_deque.popleft() if toggle else remaining_zig_deque.pop()
-                    country = country_of(step)
-                    if country_counts[country] < max_per_country:
-                        selected.append(step)
-                        country_counts[country] += 1
-                    toggle = not toggle
+                toggle = not toggle
 
-        # ---------- Mark ports with 3 cheapest prices ----------
-        all_prices = [(s["prices_sum"], s["port"]) for s in steps_dicts if s.get("prices_sum") is not None]
-        all_prices.sort(key=lambda x: x[0])
-        cheapest_three_prices = {p for p, _ in all_prices[:3]}  # take 3 lowest prices
+        # ---------------------------------------------------
+        # 4️⃣ Mark cheapest ports globally
+        # ---------------------------------------------------
+        valid_prices = [
+            s.get("prices_sum")
+            for s in steps_dicts
+            if s.get("prices_sum") is not None
+        ]
 
-        # mark ports that appear in the top 3 prices
+        cheapest_prices = set(sorted(valid_prices)[:top_n_marked])
+
         for s in steps_dicts:
-            if s.get("prices_sum") in cheapest_three_prices:
-                s['marked'] = True
+            if s.get("prices_sum") in cheapest_prices:
+                s["marked"] = True
 
-        # ---------- Final sort by distance ----------
-        selected.sort(key=lambda s: s["distance"])
+        # ---------------------------------------------------
+        # 5️⃣ Final sort by distance
+        # ---------------------------------------------------
+        selected.sort(key=distance_of)
 
         return selected
 
     # -------------------- full pipeline --------------------
+
+    def tttt(
+            self,
+            steps_dicts: list,
+            departure_port,
+            destination_port,
+            top_n_marked: int = 3,
+    ):
+
+        def country_of(step):
+            return step["port"].country_name or "unknown"
+
+        def distance_of(step):
+            return step.get("distance") or step.get("_distance_km") or float("inf")
+
+
+        country_counts = defaultdict(int)
+
+
+        steps_dicts.sort(key=lambda s: s.get("prices_sum") or float("inf"))
+
+
+        valid_prices = [
+            s.get("prices_sum")
+            for s in steps_dicts
+            if s.get("prices_sum") is not None
+        ]
+
+        cheapest_prices = set(sorted(valid_prices)[:top_n_marked])
+
+        for s in steps_dicts:
+            if s.get("prices_sum") in cheapest_prices:
+                s["marked"] = True
+        # ---------------------------------------------------
+        # 5️⃣ Final sort (still allowed, but not used for picking)
+        # ---------------------------------------------------
+        steps_dicts.sort(key=distance_of)
+        return steps_dicts
+
+
+
 
     async def build_bunkering_plan_fast(
             self,
@@ -1843,22 +1702,35 @@ class NewRouteHandler:
             departure_dt=departure_dt,
         )
         if err:
-            return None, str(err)
+            return None, None, str(err)
 
         ports = await self.collect_ports_parallel(sea_route=sea_route)
+        ports_per_country, err = await self.country_finder.do_job(sea_route.seaRouteCoordinates)
+
+
+
+        # projection
+        #projected_ports, err = await self.proj.do_job(coordinates=sea_route.seaRouteCoordinates)
 
         ports = [departure_port, *ports, destination_port]
+
+        if ports_per_country and not err:
+            ports.extend(ports_per_country)
+
         ports = utils.unique_ports(ports)
 
         steps_dicts = await self.build_bunkering_steps(
             ports=ports,
             fuels=fuels,
             price_date=datetime.date.today(), #TODO
+            take_anyway=[departure_port.locode, destination_port.locode],
         )
 
         await self.enrich_ports_with_eta_and_distance_fast(steps_dicts, sea_route)
 
-        zigzag_steps = self.select_ports_zigzag2(steps_dicts, departure_port, destination_port, max_ports=50, max_per_country=2, top_n_marked = 3)
+        #zigzag_steps = self.select_ports_zigzag2(steps_dicts, departure_port, destination_port, max_ports=50, max_per_country=2, top_n_marked = 3)
+
+        zigzag_steps =  self.tttt(steps_dicts, departure_port, destination_port)
 
         # Convert dicts to BunkeringStep objects
         bunkering_steps: List[BunkeringStep] = []
@@ -1886,6 +1758,9 @@ class NewRouteHandler:
         destination_port, err = await self.sql_db_service.get_port_by_id(route.destination_port_id)
         if err:
             return ResponsePayloadCollection(responses=[ResponsePayload(err="Sorry, I didn't find destination port.")])
+
+        if not route.fuels:
+            return await self.template_service.session_template(session, " <b> Please, select at least one fuel type. </b> ")
 
         bunkering_steps, coords, err = await self.build_bunkering_plan_fast(
             departure_port=departure_port,
@@ -2281,6 +2156,9 @@ class NewRouteHandler:
 
     async def _bunkering_port_sequence_confirmed(self, session: SessionDB, route: SeaRouteDB, intent: dict):
 
+        if not [s for s in route.bunkering_steps if s.selected]:
+            return await self.template_service.build_universal_bunkering_template(session, route, " <b> Select at least one port. </b> ")
+
         session, err = await self.navigation_handler.to_next_step(session)
         if err:
             return ResponsePayload(err="Could not go to the fuel quantity selection")
@@ -2357,19 +2235,12 @@ class NewRouteHandler:
 
         return await self.template_service.session_template(session)
 
-    async def send_bunkering_request_if_needed(self, session: SessionDB, route: SeaRouteDB):
+    async def render_bukering_request_in_pdf(self, session: SessionDB, route: SeaRouteDB):
         user_db, err = await self.sql_db_service.get_user_by_id(session.user_id)
         if err:
             return
 
         html_content, html_content_bytes, file_obj, subject, images, image_data = await self.template_service.format_option2_email2_jinja(user_db, route)
-        ok, err = await self.email_sender.route_report(
-            subject=subject,
-            text=html_content,
-            images=[image_data],
-            pdf_bytes=html_content_bytes,
-        )
-
         if user_db.email and utils.is_valid_email(user_db.email):
             ok, err = await self.email_sender.route_report(
                 subject=subject,
@@ -2378,5 +2249,22 @@ class NewRouteHandler:
                 pdf_bytes=html_content_bytes,
                 to=user_db.email
             )
+
         return file_obj
+
+
+    async def send_bunekring_request_with_quote(self, session: SessionDB, route: SeaRouteDB):
+        user_db, err = await self.sql_db_service.get_user_by_id(session.user_id)
+        if err:
+            return
+
+        html_content, html_content_bytes, file_obj, subject, images, image_data = await self.template_service.format_option2_email2_jinja(user_db, route)
+
+        ok, err = await self.email_sender.route_report(
+            subject=subject,
+            text=html_content,
+            images=[image_data],
+            pdf_bytes=html_content_bytes,
+        )
+
 

@@ -165,3 +165,12 @@ def chunk_coords(coords, step: int, chunk_size: int):
     sampled = coords[::step]
     for i in range(0, len(sampled), chunk_size):
         yield sampled[i: i + chunk_size]
+
+def clean_phone_number(v: Optional[str]) -> Optional[str]:
+    if not v:
+        return None
+
+    # Keep digits only
+    cleaned = re.sub(r"\D", "", v)
+
+    return cleaned or None

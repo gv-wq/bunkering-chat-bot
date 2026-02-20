@@ -5,9 +5,20 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 class User(BaseModel):
-    telegram_id: int = Field(..., description="Telegram user ID")
+
+    # teleram info
+    telegram_id: Optional[int] = Field(..., description="Telegram user ID")
     telegram_user_name: Optional[str] = Field(None, max_length=255, description="Telegram username")
+
+    # WhatsApp fields
+    whatsapp_phone: Optional[str] = None
+    whatsapp_effective_chat: Optional[str] = None
+    whatsapp_business_id: Optional[str] = None
+    whatsapp_name: Optional[str] = None
+    whatsapp_profile_pic_url: Optional[str] = None
+
     phone_number: Optional[str] = Field(None, max_length=50, description="Phone number")
+
     first_name: Optional[str] = Field(None, max_length=255, description="First name")
     last_name: Optional[str] = Field(None, max_length=255, description="Last name")
     email: Optional[str] = Field(None, description="Email address")
@@ -42,6 +53,14 @@ class UserDB(User):
             id=row["id"],
             telegram_id=row["telegram_id"],
             telegram_user_name=row["telegram_user_name"],
+
+            whatsapp_phone=row.get("whatsapp_phone"),
+            whatsapp_effective_chat=row.get("whatsapp_effective_chat"),
+            whatsapp_business_id=row.get("whatsapp_business_id"),
+            whatsapp_name=row.get("whatsapp_name"),
+            whatsapp_profile_pic_url=row.get("whatsapp_profile_pic_url"),
+
+
             phone_number=row["phone_number"],
             first_name=row["first_name"],
             last_name=row["last_name"],

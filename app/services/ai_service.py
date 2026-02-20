@@ -4,7 +4,7 @@ import re
 import calendar
 from difflib import SequenceMatcher
 from typing import Any, Dict, Optional, Tuple, List
-
+from io import BytesIO
 import openai
 from openai.types.chat import ChatCompletionUserMessageParam
 
@@ -75,7 +75,7 @@ class AiService:
         api_key = os.getenv("OPENAI_API_KEY")
         if os.getenv("APP_MODE") == "development":
             http_client = httpx.Client(
-                proxy="socks5h://127.0.0.1:1081",
+                proxy="socks5h://127.0.0.1:1082",
                 trust_env=False,
                 timeout=60.0,
             )
@@ -88,8 +88,73 @@ class AiService:
         self.navigation_handler = navigation_handler
         self.sql_db = sql_db_service
 
+    def fix_slash_numbers(self, text: str) -> str:
+        # Replace dots between numbers with slash if it looks like a separator
+        # e.g., 1.20.300 → 1 20 300
+        text = re.sub(r'(\d+)\.(\d+)', r'\1 \2', text)
+
+        # Normalize multiple spaces
+        text = re.sub(r'\s+', ' ', text)
+        return text.strip()
+
+    async def transcribe_audio(self, audio_stream: BytesIO) -> str | None:
+        try:
+            audio_stream.name = "voice.ogg"  # IMPORTANT for OpenAI
+
+            transcript = self.client.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_stream,
+            )
+            raw_text = transcript.text.strip()
+
+            # Step 1: replace dots/commas that are likely misheard slashes
+            # Only replace dots/commas between number groups (heuristic)
+            # "1.2.3 , 4.5.6" -> "1 2 3 / 4 5 6"
+            raw_text = re.sub(r'(?<=\d)[\.,](?=\d)', ' ', raw_text)
+            raw_text = re.sub(r'\s*(slash|/|\\)\s*', ' / ', raw_text)  # normalize spoken slashes
+            #raw_text = re.sub(r'\s+', ' ', raw_text).strip()  # normalize spaces
+            raw_text = raw_text.replace(".", "").replace(",", '')
+
+            # Step 2: send to LLM normalizer
+            normalized_text = await self.normalize_transcript(raw_text)
+            return normalized_text
+
+        except Exception as e:
+            print(f"STT error: {e}")
+            return None
+
+    async def normalize_transcript(self, text: str) -> str:
+        prompt = f"""
+    You are a strict text normalizer.
+
+    Rules:
+    1. Translate the text to English if needed.
+    2. Convert ALL numbers to digits (no words).
+    3. Keep place names in English (Abu Dhabi, Hamburg, Shanghai).
+    4. Do NOT add words.
+    5. Do NOT remove meaning.
+    6. Output ONLY the normalized text.
+
+    Input:
+    {text}
+
+    Output: 
+    """
+
+        response = self.client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                ChatCompletionUserMessageParam(role="system", content= "You normalize text."),
+                ChatCompletionUserMessageParam(role="user", content=prompt),
+            ],
+            temperature=0.0,
+            max_tokens=100,
+        )
+
+        return response.choices[0].message.content.strip()
+
     def _normalize(self, text: str) -> str:
-        return re.sub(r"\s+", " ", text.lower().strip())
+        return re.sub(r"\s+", " ", text.lower().strip().replace(".", ""))
 
     def is_validation_positive(self, text: str) -> bool:
         text = self._normalize(text)
@@ -108,6 +173,7 @@ class AiService:
             "valid",
             "good",
             "perfect",
+            "next"
         }
 
         # must match the FULL message
@@ -285,7 +351,7 @@ class AiService:
         self, text: str, admin_status: bool = False
     ) -> Tuple[Dict, Optional[str]]:
         try:
-            message_lower = text.lower().strip()
+            message_lower = self._normalize(text)
             nav_intent = self._get_navigation_intent_simple(message_lower)
             if nav_intent:
                 return nav_intent, None
@@ -2101,6 +2167,10 @@ class AiService:
                 if score > best_score:
                     best_score = score
                     best_role = option
+
+
+            if best_score < 0.5:
+                return {"action": "error"}, "Please select from options."
 
             return {"action": "update", "role": best_role}, None
 

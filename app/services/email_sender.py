@@ -3,13 +3,11 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
 
-MAIL = "precompiledasset@gmail.com"
 
 SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 587
-SMTP_USER = MAIL
-SMTP_PASS = '["Honor400"]'
-PSWD = "bfoi egfj lqxr otcn"
+SMTP_USER = "chatbot@thebunkering.com"
+PSWD = "egiw fdjf igva orix "
 
 class EmailSender:
 
@@ -31,6 +29,9 @@ class EmailSender:
 
         # Attach images
         for image_index, img_bytes in enumerate(images, 1):
+            if not img_bytes:
+                continue
+
             part = MIMEApplication(img_bytes, Name=f"image_{image_index}.png")
             part["Content-Disposition"] = (
                 f'attachment; filename="image_{image_index}.png"'

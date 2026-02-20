@@ -16,6 +16,11 @@ from app.services.external_api.searoute_api import SearouteApi
 from app.services.internal_api.map_builder_api import MapBuilderApi
 from app.services.telegram_service import TelegramService
 from app.services.template.telegram_template_service import TemplateService
+from app.services.whatsapp_service import WhatsApp360DialogService
+
+from app.services.utils.island_projection import IslandProjection
+from app.services.utils.near_country_search import RouteCountryFinder
+import geopandas as gpd
 
 import uvicorn
 from health.server import app as health_app
@@ -26,9 +31,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# if os.getenv("APP_MODE") == "development":
-#     os.environ["HTTP_PROXY"] = "socks5h://127.0.0.1:1081"
-#     os.environ["HTTPS_PROXY"] = "socks5h://127.0.0.1:1081"
 
 async def run_health_server():
     config = uvicorn.Config(
@@ -41,7 +43,21 @@ async def run_health_server():
     server = uvicorn.Server(config)
     await server.serve()
 
-async def start_bot():
+async def run_telegram(service: TelegramService):
+    await service.run()
+
+
+async def run_whatsapp(service: WhatsApp360DialogService):
+    config = uvicorn.Config(
+        service.app,
+        host="0.0.0.0",
+        port=int(require("WAWEBHOOK_SERVER_PORT")),
+        log_level="info"
+    )
+    server = uvicorn.Server(config)
+    await server.serve()
+
+async def main():
     logger.info("Starting app in %s mode", ENV)
 
     sql_db_service = DbService()
@@ -52,10 +68,10 @@ async def start_bot():
         require("SEAROUTE_TOKEN"),
     )
 
-    bubble_api = BubbleApi(
-        require("BUBBLE_BASE_URL"),
-        require("BUBBLE_TOKEN"),
-    )
+    # bubble_api = BubbleApi(
+    #     require("BUBBLE_BASE_URL"),
+    #     require("BUBBLE_TOKEN"),
+    # )
 
     map_builder_api = MapBuilderApi(
         base_url=require("MAP_BUILDER_BASE_URL"),
@@ -82,36 +98,59 @@ async def start_bot():
         navigation_handler=navigation_handler,
     )
 
+
+    land_gdf = gpd.read_file("./data/ne_10m_land.shp")
+
+    projector = IslandProjection(land_gdf, sql_db_service)
+
+    country_finder = RouteCountryFinder("./data/ne_10m_admin_0_countries.shp", sql_db_service)
+
     core_service = CoreService(
         ai_service,
         template_service,
         sql_db_service,
         searoute_api,
-        bubble_api,
+        #bubble_api,
         navigation_handler,
         map_builder_api,
-        admin_handler
+        admin_handler,
+        projector,
+        country_finder
     )
 
-    tg_service = TelegramService(
-        core_service,
-        require("TELEGRAM_BOT_TOKEN"),
+    telegram_service = TelegramService(
+        token=require("TELEGRAM_BOT_TOKEN"),
+        ai_service=ai_service,
+        core_service=core_service
     )
 
-    logger.info("🚢 Maritime Route Manager Bot is running")
-    await tg_service.run_polling()
+    core_service.set_bot(telegram_service.get_bot())
+
+    whatsapp_service = WhatsApp360DialogService(
+        core_service=core_service,
+        api_key=require("_360_DIALOG_API_KEY"),
+        v_token=require("_360_DIALOG_API_TOKEN")
+    )
+
+    await asyncio.gather(
+        run_telegram(telegram_service),
+        run_whatsapp(whatsapp_service)
+    )
 
 
 if __name__ == "__main__":
-    async def main():
-        health_task = asyncio.create_task(run_health_server())
-        bot_task = asyncio.create_task(start_bot())
-        await asyncio.gather(health_task, bot_task)
+    asyncio.run(main())
 
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Bot stopped by user")
-    except Exception:
-        logger.exception("Bot crashed")
-        sys.exit(1)
+# if __name__ == "__main__":
+#     async def main():
+#         health_task = asyncio.create_task(run_health_server())
+#         bot_task = asyncio.create_task(start_bot())
+#         await asyncio.gather(health_task, bot_task)
+#
+#     try:
+#         asyncio.run(main())
+#     except KeyboardInterrupt:
+#         logger.info("Bot stopped by user")
+#     except Exception:
+#         logger.exception("Bot crashed")
+#         sys.exit(1)

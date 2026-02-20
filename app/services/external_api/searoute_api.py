@@ -83,6 +83,8 @@ class SearouteApi:
         if departure_dt is not None:
             params["departure"] = int(departure_dt.timestamp() * 1000)
 
+        params['vesselDraft'] = 10
+
         query = urlencode(params)
         url = f"{endpoint}?{query}" if query else endpoint
 

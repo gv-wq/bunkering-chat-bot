@@ -38,6 +38,7 @@ class SeaPort(BaseModel):
     barge_status: Optional[bool] = Field(None)
     truck_status: Optional[bool] = Field(None)
     agent_contact_list : Optional[str] = Field(None)
+    manual_input: bool = Field(False)
 
     @field_validator("locode")
     def validate_locode(cls, v):
@@ -69,7 +70,6 @@ class SeaPort(BaseModel):
     def from_db_row(cls, row) -> "SeaPort":
         """Create PortVectorBase from database row"""
         return cls(
-
             locode=row["locode"],
             country_code="",
             country_name=row["country_name"],
@@ -77,12 +77,8 @@ class SeaPort(BaseModel):
             latitude=row["latitude"],
             longitude=row["longitude"],
             rank_score=float(row["rank_score"]) if row.get("rank_score") else None,
-            similarity_score=(
-                float(row["similarity_score"]) if row.get("similarity_score") else None
-            ),
-            combined_score=(
-                float(row["combined_score"]) if row.get("combined_score") else None
-            ),
+            similarity_score=(float(row["similarity_score"]) if row.get("similarity_score") else None),
+            combined_score=(float(row["combined_score"]) if row.get("combined_score") else None),
             match_type=row.get("match_type", "unknown"),
             mabux_ids=row.get("mabux_ids", []),
             port_size=row.get("port_size", None),
@@ -90,6 +86,7 @@ class SeaPort(BaseModel):
             barge_status=row.get("barge_status", None),
             truck_status=row.get("truck_status", None),
             agent_contact_list=row.get("agent_contact_list", None),
+            manual_input=row.get("manual_input", False),
         )
 
 class SeaPortBubble(SeaPort):
@@ -137,8 +134,8 @@ class SeaPortDB(SeaPortBubble):
             mabux_id=get_safe_value(10,  None),
             barge_status=get_safe_value(11, None),
             truck_status=get_safe_value(12,  None),
-            agent_contact_list=get_safe_value(13, None)
-
+            agent_contact_list=get_safe_value(13, None),
+            manual_input=get_safe_value(14, False),
         )
 
     @classmethod
@@ -155,12 +152,8 @@ class SeaPortDB(SeaPortBubble):
             latitude=row["latitude"],
             longitude=row["longitude"],
             rank_score=float(row["rank_score"]) if row.get("rank_score") else None,
-            similarity_score=(
-                float(row["similarity_score"]) if row.get("similarity_score") else None
-            ),
-            combined_score=(
-                float(row["combined_score"]) if row.get("combined_score") else None
-            ),
+            similarity_score=(float(row["similarity_score"]) if row.get("similarity_score") else None),
+            combined_score=(float(row["combined_score"]) if row.get("combined_score") else None),
             match_type=row.get("match_type", "unknown"),
             mabux_ids= row.get("mabux_ids"),
             port_size=row.get("port_size", None),
@@ -169,6 +162,7 @@ class SeaPortDB(SeaPortBubble):
             barge_status=row.get("barge_status", None),
             truck_status=row.get("truck_status", None),
             agent_contact_list=row.get("agent_contact_list", None),
+            manual_input=row.get("manual_input", False),
         )
 
 
@@ -204,15 +198,15 @@ class SeaPortDB(SeaPortBubble):
         prefix = "" if not update_status else f"{emogye.PLAY} "
 
         if status is True:
-            prefix += "<b>Departure port"
+            prefix += " <b> Departure port"
             if update_status:
                 prefix += " (current)"
-            prefix += ":</b>\n"
+            prefix += ": </b> \n"
         elif status is False:
-            prefix += "<b>Destination port"
+            prefix += " <b> Destination port"
             if update_status:
                 prefix += " (current)"
-            prefix += ":</b>\n"
+            prefix += ": </b> \n"
 
         s = f"({self.port_size})" if self.port_size else "(-)"
 

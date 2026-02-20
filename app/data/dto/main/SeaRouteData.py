@@ -10,6 +10,8 @@ from app.data.dto.main.PortSelectionData import PortSelectionData
 class SeaRouteData(BaseModel):
     port_selection: PortSelectionData = Field(default_factory=PortSelectionData)
     departure_to_destination_coordinates : List[Coordinates] = Field(default_factory=list)
+    pdf_requested: bool = Field(default_factory=bool)
+    quote_requested: bool = Field(default_factory=bool)
     is_updating: bool = Field(default_factory=bool)
 
     @classmethod

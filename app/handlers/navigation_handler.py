@@ -1,3 +1,4 @@
+import uuid
 from typing import Dict, Optional, Tuple, List
 
 from app.data import emogye
@@ -9,7 +10,7 @@ from app.data.enums.RouteTask import RouteTaskEnum
 from app.data.enums.AdminStepEnum import AdminStepEnum
 from app.data.enums.search_route_enum import SearchRouteStepEnum
 from app.services.db_service import DbService
-
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 class NavigationHandler:
     def __init__(self, sql_db_service: DbService):
@@ -104,7 +105,7 @@ class NavigationHandler:
     def get_step_title(self, step_value: str, update_status: bool = False) -> str:
         """Get the display title for a step"""
 
-        new_route = f"{emogye.ANCHOR} New route - "
+        new_route = "" #f"{emogye.ANCHOR} New route - "
         titles = {
             RouteStepEnum.DEPARTURE_PORT_SUGGESTION.value: f"{new_route}{emogye.ARROW_UP} Departure port search",
          #   RouteStepEnum.DEPARTURE_PORT_NEARBY.value: f"{emogye.PIN} Departure port nearby",
@@ -147,7 +148,7 @@ class NavigationHandler:
         current_index = self._get_step_index(flow, current_step)
 
         navigation_lines = [
-            "\n\nNavigation Commands:",
+            "\n\nNavigational Commands:",
         ]
 
         # Add NEXT command with specific step name
@@ -161,14 +162,14 @@ class NavigationHandler:
                     (current_step in free_steps and next_step in sequential_steps and
                      current_step == free_steps[-1] and next_step == sequential_steps[0]):
                 # navigation_lines.append(f"-  next, yes(y), fine, confirm - {next_step_title}")
-                navigation_lines.append(f"- yes(y) - {next_step_title}")
+                navigation_lines.append(f"yes (y) — Go to the next step\n  — {next_step_title}")
 
 
         # Add BACK command only if there are previous steps
         if current_index > 0:
             prev_step = flow[current_index - 1]
             step_title = self.get_step_title(prev_step)
-            navigation_lines.append(f"- back - {step_title}")
+            navigation_lines.append(f"back — Go to the previous step\n  — {step_title}")
 
 
         # Add JUMP command for free steps with available targets
@@ -184,8 +185,90 @@ class NavigationHandler:
                 #navigation_lines.append("-  jump stepName - Jump to free step")
                 #navigation_lines.append("Available steps:")
                 #navigation_lines.extend(available_jumps)
-        navigation_lines.append("- menu - Main menu")
+        navigation_lines.append("menu — Main menu")
         return "\n".join(navigation_lines)
+
+    def get_navigation_keyboard(self, current_step: Optional[str] = None) -> InlineKeyboardMarkup:
+        buttons = []
+
+        # YES
+        buttons.append(
+            InlineKeyboardButton("✅ Yes", callback_data="yes")
+        )
+
+        # BACK
+        if current_step and  current_step != RouteStepEnum.DEPARTURE_PORT_SUGGESTION.value:
+            buttons.append(InlineKeyboardButton("⬅ Back", callback_data="back"))
+
+        # MENU
+        buttons.append(
+            InlineKeyboardButton("🏠 Menu", callback_data="menu")
+        )
+
+        return InlineKeyboardMarkup([buttons])
+
+    def get_menu_keyboard(self)-> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup([[
+            InlineKeyboardButton("🏠 Menu", callback_data="menu")
+        ]])
+
+    def get_show_route_navigation_keyboard2(self, current_step: Optional[str] = None) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Yes", callback_data="yes"),
+            InlineKeyboardButton("🗑️ Remove", callback_data="remove"),
+            InlineKeyboardButton("⬅ Back", callback_data="back"),
+            InlineKeyboardButton("🏠 Menu", callback_data="menu")
+        ]])
+
+
+    def get_main_menu_keyboard(self, session: SessionDB) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup([[
+            InlineKeyboardButton(f"{emogye.SHIP} New route", callback_data="1"),
+            InlineKeyboardButton(f"{emogye.CALENDAR} My routes", callback_data="2"),
+            InlineKeyboardButton(f"{emogye.STATS_LINE} Port prices", callback_data="3")
+        ]])
+
+    def get_yes_no_keyboard(self, ) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup([[
+            InlineKeyboardButton(f"{emogye.CHECK_GREEN_BACKGROUND} Yes", callback_data="yes"),
+            InlineKeyboardButton(f"{emogye.CROSS_RED} No", callback_data="no"),
+        ]])
+
+    def get_yes_no_back_keyboard(self)  -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup([[
+            InlineKeyboardButton(f"{emogye.CHECK_GREEN_BACKGROUND} Yes", callback_data="yes"),
+            InlineKeyboardButton(f"{emogye.CROSS_RED} No", callback_data="no"),
+            InlineKeyboardButton("⬅ Back", callback_data="back"),
+        ]])
+
+
+    def get_to_main_menu_keyboard(self, session: SessionDB) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup([[
+            InlineKeyboardButton(f"{emogye.HOME} Menu", callback_data="menu"),
+        ]])
+
+    def get_show_route_navigation_keyboard(self, session: SessionDB) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup([[
+            InlineKeyboardButton(f"+", callback_data="+"),
+            InlineKeyboardButton(f"-", callback_data="-"),
+            InlineKeyboardButton(f"{emogye.HOME} Menu", callback_data="menu"),
+        ]])
+
+    def get_role_choice_keyboard(self) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"1. Ship owner {emogye.SHIP}", callback_data="1")],
+            [InlineKeyboardButton(f"2. Ship operator {emogye.OPERATOR}", callback_data="2")],
+            [InlineKeyboardButton(f"3. Fleet / Voyage manager {emogye.COMPASS}", callback_data="3")],
+            [InlineKeyboardButton(f"4. Bunker trader / Supplier {emogye.OIL_DUM}", callback_data="4")],
+            [InlineKeyboardButton(f"5. Charterer {emogye.STATS}", callback_data="5")],
+            [InlineKeyboardButton(f"6. Technical / Other {emogye.MECHANICAL_KEY}", callback_data="6")],
+        ])
+
+    def get_skip_button(self):
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"Skip ", callback_data="-")],
+
+        ])
 
     def get_main_menu(self, admin_status: bool = False, new_user: bool = False) -> str:
         l = [
@@ -207,7 +290,6 @@ class NavigationHandler:
         return "\n".join(l)
 
 
-
     async def to_prev_step(
             self, session: SessionDB
     ) -> Tuple[Optional[SessionDB], Optional[str]]:
@@ -221,6 +303,18 @@ class NavigationHandler:
         prev_step = None
         if (session.current_task == RouteTaskEnum.SEARCH_ROUTE.value) and (session.current_step == SearchRouteStepEnum.CONFIRM_DELETE.value):
             return session, None
+
+        if session.current_task == RouteTaskEnum.CREATE_ROUTE.value and session.current_step == RouteStepEnum.COMPANY_NAME.value and session.route_id:
+            route, err = await self.sql_db_service.get_route_by_id(str(session.route_id))
+            if err:
+                return session, err
+
+            if not route.data.pdf_requested:
+                session.current_step = RouteStepEnum.PDF_REQUEST.value
+                session, err = await self.sql_db_service.update_session(session.user_id, session.current_task, session.current_step, session.route_id, session.data)
+                return session, err
+
+
 
         current_index = self._get_step_index(flow, session.current_step)
         if current_index <= 0:

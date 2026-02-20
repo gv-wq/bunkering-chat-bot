@@ -61,6 +61,18 @@ class MainMenuHandler:
             direction = intent.get("direction")
             if direction == "back":
 
+                if session.current_step == StartStepEnum.USER_NAME.value:
+                    session.current_step = StartStepEnum.ROLE.value
+                    session, err = await self.sql_db_service.update_session(session.user_id, session.current_task, session.current_step, session.route_id, session.data)
+                    if err:
+                        return ResponsePayloadCollection(
+                            responses=[ResponsePayload(err=f"Eeeeh with: {err}")]
+                        )
+                    return await self.template_service.new_start_template(session, message, is_admin)
+
+                elif session.current_step == StartStepEnum.ROLE.value:
+                    return await self.template_service.new_start_template(session, message, is_admin)
+
                 return await self.template_service.main_menu_template(session,  is_admin=is_admin)
             elif direction in ["menu", "cancel"]:
 
@@ -99,6 +111,7 @@ class MainMenuHandler:
                 "3": start_task_port_price,
                 "price": start_task_port_price,
                 "port price": start_task_port_price,
+                "port prices": start_task_port_price,
                 "fuel price": start_task_port_price,
                 "check": start_task_port_price,
 
@@ -297,18 +310,47 @@ class MainMenuHandler:
     async def _handle_user_name(self, session: SessionDB, message: str, is_admin: bool):
         name = message.strip()
 
-        # dash / skip / empty → go next
-        if name in {"-", "skip", "next", ""}:
-            session.current_step = StartStepEnum.DONE.value
-            await self.sql_db_service.update_session(session.user_id, RouteTaskEnum.MAIN_MENU.value, StartStepEnum.DONE.value, None, session.data)
-            session, err = await self.to_main_menu(session)
-            return await self.template_service.session_template(session,
-                err_msg="Let’s continue 👍",
-                is_admin=is_admin,
+        # Length validation
+        if len(name) > 60:
+            return await self.template_service.user_name_template(
+                session, "Name is too long (maximum 60 characters). Please enter a shorter name."
             )
 
+        if len(name) == 0:
+            return await self.template_service.user_name_template(
+                session, "Please enter a name."
+            )
 
-        # save first name
+        # Character validation - simple version
+        import re
+
+        # Check for numbers
+        if re.search(r'\d', name):
+            return await self.template_service.user_name_template(
+                session, "Names cannot contain numbers. Please enter a valid name."
+            )
+
+        # Check for special symbols (only allow letters, spaces, hyphens, apostrophes)
+        allowed_pattern = r'^[A-Za-zÀ-ÿ\s\-\']+$'
+        if not re.match(allowed_pattern, name):
+            return await self.template_service.user_name_template(
+                session, "Names can only contain letters, spaces, hyphens (-), and apostrophes ('). Please enter a valid name."
+            )
+
+        # Additional validations
+        name_clean = name.strip(" -'")  # Remove surrounding spaces, hyphens, apostrophes
+        if len(name_clean) == 0:
+            return await self.template_service.user_name_template(
+                session, "Please enter a valid name."
+            )
+
+        # Check for excessive special characters
+        if '--' in name or "''" in name or '- ' in name or ' -' in name:
+            return await self.template_service.user_name_template(
+                session, "Name contains invalid formatting. Please use proper spacing."
+            )
+
+        # Save the validated name
         _, err = await self.sql_db_service.update_user(
             str(session.user_id), {"filled_name": name}
         )
@@ -322,7 +364,7 @@ class MainMenuHandler:
 
         return await self.template_service.main_menu_template(
             session,
-            message=f"Nice to meet you, {name} 👍\nLet’s continue.",
+            message=f"Nice to meet you, {name} 👍\nLet's continue.",
             is_admin=is_admin,
             new_user=True
         )

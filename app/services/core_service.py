@@ -1,6 +1,7 @@
+from io import BytesIO
 from typing import Dict, Tuple, Optional
 
-from telegram import Update
+from telegram import Update, InputFile
 from telegram.ext import ContextTypes
 from telegram import Update, InputMediaPhoto
 from app.data import emogye
@@ -8,6 +9,9 @@ from app.data.dto.main.SessionData import SessionData, RouteSearch
 from app.data.dto.main.TariffSelection import TariffSelection
 from app.data.dto.main.User import UserDB
 from app.data.enums.RouteStep import RouteStepEnum
+from app.data.enums.StartStepEnum import StartStepEnum
+from app.domain.message import IncomingMessage
+from app.domain.response import OutgoingResponse
 from app.handlers.admin_handler import AdminHandler
 from app.handlers.update_tariff_handler import UpdateTariffHandler
 from app.services.external_api.bubble_api import BubbleApi
@@ -30,6 +34,8 @@ from app.services.ai_service import AiService
 from app.services.db_service import DbService
 from app.services.template.telegram_template_service import TemplateService
 from app.services.utils import utils
+from app.services.utils.island_projection import IslandProjection
+from app.services.utils.near_country_search import RouteCountryFinder
 
 
 class CoreService:
@@ -39,11 +45,12 @@ class CoreService:
         template_service: TemplateService,
         sql_db_service: DbService,
         searoute_api: SearouteApi,
-        bubble_api: BubbleApi,
+        #bubble_api: BubbleApi,
         navigation_handler: NavigationHandler,
         map_image_api: MapBuilderApi,
         admin_handler: AdminHandler,
-
+        projector: IslandProjection,
+        country_finder: RouteCountryFinder
 
     ):
         self.admin_handler = admin_handler
@@ -61,8 +68,10 @@ class CoreService:
             template_service=template_service,
             navigation_handler=navigation_handler,
             searoute_api=searoute_api,
-            bubble_api=bubble_api,
+          #  bubble_api=bubble_api,
             map_image_api=map_image_api,
+            projector=projector,
+            country_finder=country_finder
         )
 
         self.search_route_handler = SearchRouteHandler(
@@ -85,133 +94,133 @@ class CoreService:
             template_service=template_service,
             navigation_handler=navigation_handler,)
 
-    async def get_or_create_user(
-            self,
-            context:ContextTypes.DEFAULT_TYPE,
-            telegram_user_id: int,
-            telegram_effective_chat_id: int,
-            user_data: dict = None
-    ) -> Tuple[Optional[UserDB], Optional[str]]:
-        user, err = await self.sql_db_service.get_user_by_telegram_id(telegram_user_id)
-        if err:
-            return None, err
+        self.tg_bot = None
+
+    def set_bot(self, tg_bot):
+        self.tg_bot = tg_bot
+
+    async def get_or_create_user(self, msg: IncomingMessage) -> Tuple[Optional[UserDB], Optional[str]]:
+        """
+        Get or create user for either Telegram or WhatsApp
+        channel: 'telegram' or 'whatsapp'
+        """
+
+        user = None
+
+        if msg.source == "telegram" and msg.user_id:
+            user, err = await self.sql_db_service.get_user_by_telegram_id(int(msg.user_id))
+            if err:
+                return None, err
+
+        elif msg.source == "whatsapp" and msg.user_id:
+            user, err = await self.sql_db_service.get_user_by_phone_number(msg.user_id)
+            if err:
+                return None, err
+
+
         if user:
+            # Update channel-specific info if needed
+            update_fields = {}
+
+            if msg.source == "whatsapp":
+                if msg.source and not user.whatsapp_phone:
+                    update_fields["whatsapp_phone"] = msg.source
+                if msg.chat_id and not user.whatsapp_effective_chat:
+                    update_fields["whatsapp_effective_chat"] = msg.chat_id
+
+                if msg.meta.get("whatsapp_name", False) and not user.whatsapp_name:
+                    update_fields["whatsapp_name"] = msg.meta.get("whatsapp_name")
+
+                # If this is a WhatsApp user but phone matches telegram user's phone
+                if msg.user_id and msg.user_id.replace("+", "") == user.phone_number.replace("+", "") and not user.whatsapp_phone:
+                    update_fields["whatsapp_phone"] = msg.user_id
+
+            if update_fields:
+                user, err = await self.sql_db_service.update_user(str(user.id), update_fields)
+                if err:
+                    #logger.error(f"Failed to update user: {err}")
+                    pass
+
             return user, None
 
-            # Create new user with new fields
-        telegram_user_name = user_data.get("telegram_user_name") if user_data else None
-        phone_number = user_data.get("phone_number") if user_data else None
-        first_name = user_data.get("first_name") if user_data else None
-        last_name = user_data.get("last_name") if user_data else None
-        email = user_data.get("email") if user_data else None
+        # Create new user
+        if msg.source == "telegram":
+            d = {
+                "telegram_id": msg.user_id,
+                "telegram_effective_chat_id": msg.chat_id,
+                "telegram_user_name": msg.meta.get("telegram_user_name"),
+                "phone_number": msg.meta.get("phone_number"),
+                "first_name": msg.meta.get("first_name"),
+                "last_name": msg.meta.get("last_name"),
+            }
+            new_user, err = await self.sql_db_service.create_user(d)
+            await self._notify_admin_new_user(new_user,"Telegram")
 
-        new_user, err = await self.sql_db_service.create_user(
-            telegram_id=telegram_user_id,
-            telegram_user_name=telegram_user_name,
-            phone_number=phone_number,
-            first_name=first_name,
-            last_name=last_name,
-            email=email,
-            telegram_effective_chat_id=telegram_effective_chat_id
-        )
+        elif msg.source == "whatsapp":
+            d = {
+                "phone_number": msg.user_id,
+                "whatsapp_effective_chat": msg.chat_id,
+                "first_name": msg.meta.get("whatsapp_name"),
+            }
+            new_user, err = await self.sql_db_service.create_user(d)
+            if not new_user or err:
+                return None, "Could not create user"
 
-        super_admin, err = await self.sql_db_service.get_user_by_telegram_name("gee_vo")
-        if err:
-            return new_user, None
+            await self._notify_admin_new_user(new_user, "WhatsApp")
 
-        if not super_admin:
-            return new_user, None
-
-        fields = {
-            "Telegram user name": f"@{telegram_user_name}" if telegram_user_name else None,
-            "Phone number": phone_number,
-            "First name": first_name,
-            "Last name": last_name,
-            "Email": email,
-        }
-
-        l = ["You have new user!"] + [
-            f"{label}: {value}" for label, value in fields.items() if value
-        ]
-        message = "\n".join(l)
-        try:
-            r = await context.bot.send_message(chat_id=super_admin.telegram_effective_chat_id, text=message)
-        except Exception as e:
-            pass
+        else:
+            return None, f"Unsupported channel: {msg.source}"
 
         return new_user, None
 
-
-
-
-
-    async def handle_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.message.reply_text(
-            f'{emogye.HI} Hi!\n'
-            'I help ship owners, operators & managers\n'
-            'plan a vessel route, view bunker prices\n'
-            'along the route, and estimate fuel costs — in under 2 minutes.\n\n'
-            f'Powered by AI-assisted route & bunker analysis.\n'
-            f'No spam.',
-            parse_mode="HTML"
-        )
-
+    async def _notify_admin_new_user(self, user: UserDB, platform: str):
+        """Notify admin about new user registration"""
         try:
-            response_collection: ResponsePayloadCollection = await self.handle_message(update, context, True)
+            super_admin, err = await self.sql_db_service.get_user_by_telegram_name("gee_vo")
+            if err or not super_admin or not super_admin.telegram_effective_chat_id:
+                return
 
-            for response_payload in response_collection.responses:
+            fields = [f"Platform: {platform}"]
 
-                # Handle error
-                if response_payload.err:
-                    await update.message.reply_text(f"❌ Error: {response_payload.err}")
-                    continue
+            if platform == "Telegram":
+                if user.telegram_user_name:
+                    fields.append(f"Username: @{user.telegram_user_name}")
+                if user.first_name:
+                    fields.append(f"First: {user.first_name}")
+                if user.last_name:
+                    fields.append(f"Last: {user.last_name}")
+                if user.phone_number:
+                    fields.append(f"Phone: {user.phone_number}")
+                if user.email:
+                    fields.append(f"Email: {user.email}")
 
-                # Handle multiple images → send album
-                if response_payload.has_images():
-                    media_group = []
+            elif platform == "WhatsApp":
+                if user.phone_number:
+                    fields.append(f"Phone: {user.phone_number}")
+                if user.whatsapp_name:
+                    fields.append(f"Name: {user.whatsapp_name}")
+                if user.phone_number:
+                    fields.append(f"Additional phone: {user.phone_number}")
+                if user.email:
+                    fields.append(f"Email: {user.email}")
 
-                    for idx, img_bytes in enumerate(response_payload.images):
-                        media_group.append(
-                            InputMediaPhoto(
-                                media=img_bytes,
-                                caption=response_payload.text if idx == 0 else "",
-                                parse_mode="HTML"
-                            )
-                        )
+            message = "📱 New user registered!\n\n" + "\n".join(fields)
 
-                    await update.message.reply_media_group(media=media_group)
-                    continue
+            if not self.tg_bot:
+                return
 
-                # Handle text-only message
-                if response_payload.has_text():
-                    await update.message.reply_text(
-                        response_payload.text,
-                        parse_mode="HTML"
-                    )
-                    continue
+            await self.tg_bot.send_message(chat_id=super_admin.telegram_effective_chat_id, text=message)
 
-                # Nothing at all
-                await update.message.reply_text("No response generated", parse_mode="HTML")
+        except Exception:
+            pass
 
-        except Exception as e:
-            await update.message.reply_text(
-                f"❌ Unexpected error: {str(e)}",
-                parse_mode="HTML"
-            )
-    async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE, is_start : bool = False) -> ResponsePayloadCollection:
-
-        if not utils.is_valid_message(update.message.text):
+    async def handle(self, msg: IncomingMessage, start_status: bool = False) -> ResponsePayloadCollection:
+        if not utils.is_valid_message(msg.text):
             return ResponsePayloadCollection(responses=[ResponsePayload(text=f"{emogye.BRITAIN_FLAG}/{emogye.USA_FLAG} language please. Chars and digits.")])
 
-        user_data = {
-            "first_name": update.effective_user.first_name,
-            "last_name": update.effective_user.last_name,
-            "telegram_user_name": update.effective_user.username,
-        }
-        user_db, err = await self.get_or_create_user(context=context, telegram_user_id=update.effective_user.id,telegram_effective_chat_id=update.effective_chat.id, user_data=user_data )
-        #user_db, err = await self.sql_db_service.get_or_create_user(update.effective_user.id, user_data)
-        if err:
-            return ResponsePayloadCollection(responses=[ResponsePayload(err=err)])
+        user_db, err = await self.get_or_create_user(msg)
+        if not user_db or err:
+            return ResponsePayloadCollection(responses=[ResponsePayload(text="could not register  you, something went wrong")])
 
         if not user_db.is_active:
             return ResponsePayloadCollection(responses=[ResponsePayload(text="Sorry, yor account was suspended.\n Please contact +971 58 584 6441 to get help.")])
@@ -228,27 +237,29 @@ class CoreService:
         if user_routes_count and not err:
             user_db.route_count = user_routes_count
 
-        intent, err = await self.ai_service.parse_navigation_intent(update.message.text, user_db.is_admin is True)
+        intent, err = await self.ai_service.parse_navigation_intent(msg.text, user_db.is_admin is True)
         if err:
-            return ResponsePayloadCollection(
-                responses=[ResponsePayload(err=f"Intent parsing error: {err}")]
-            )
+            return ResponsePayloadCollection(responses=[ResponsePayload(err=f"Intent parsing error: {err}")])
 
         if user_tariff.exceeded(user_db.route_count, user_db.message_count) and not user_db.is_admin is True:
             intent["update_tariff"] = True
 
-        if is_start:
+
+        if user_db.message_count == 0:
+            intent["is_start"] = True
+
+        if start_status:
             intent["is_start"] = True
 
         if user_db.role is None:
             intent["is_start"] = True
 
-        response = await self._handle_session_flow(user_db, session, intent, update.message.text)
+        response = await self._handle_session_flow(user_db, session, intent, msg.text)
 
         message_count = user_db.message_count + 1
         user_db, err = await self.sql_db_service.update_user(str(user_db.id), {"message_count": message_count})
-
         return response
+
 
     async def _handle_session_flow(self, user: UserDB, session: SessionDB, intent: Dict, message: str) -> ResponsePayloadCollection:
         if intent.get("update_tariff", None):
@@ -258,9 +269,16 @@ class CoreService:
             session, err = await self.sql_db_service.update_session(session.user_id, RouteTaskEnum.START.value,None, None, session.data)
 
         if intent["main_menu"]:
+            if session.current_step in (StartStepEnum.ROLE.value, StartStepEnum.USER_NAME.value):
+                return await self.main_menu_handler.handle_start(session, message, user.is_admin)
+
             session, err = await self.main_menu_handler.to_main_menu(session)
 
         elif intent["prev_step"]:
+            if session.current_step in (StartStepEnum.ROLE.value, StartStepEnum.USER_NAME.value):
+                return await self.main_menu_handler.handle_start(session, message, user.is_admin)
+
+
             session, err = await self.navigation_handler.to_prev_step(session)
             return await self.template_service.session_template(session, err, is_admin=user.is_admin)
 
@@ -295,8 +313,6 @@ class CoreService:
         elif session.current_task == RouteTaskEnum.UPDATE_TARIFF.value:
             return await self.update_tariff_handler.handle(session=session, message=message)
 
-        # elif session.current_task == RouteTaskEnum.ADMIN.value:
-        #     return await self.admin_handler.handle(session=session, message=message)
         else:
             return ResponsePayloadCollection(
                 responses=[

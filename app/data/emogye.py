@@ -22,6 +22,7 @@ SMILE = "🙂"
 STATS = "📊"
 HI = "👋"
 THIS = "👉"
+NOTE_THIS = "ℹ️"
 FINE="👍"
 HANDSHAKE = "🤝"
 ANCHOR = "⚓️"
@@ -53,8 +54,8 @@ NUM2 = "2️⃣'"
 NUM3 = "3️⃣"
 
 
-
-
+OIL_STATION = "⛽"
+HOME = "🏠"
 
 
 
