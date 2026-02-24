@@ -2095,6 +2095,7 @@ class TemplateService:
                          #f"{getattr(port_info, 'country_name', 'N/A')} - "
                          #f"{getattr(port_info, 'locode', 'N/A')}"
                          #)
+            lines.append(f"Info: {port_info.agent_contact_list}")
             today = datetime.now()
             lines.append(f"Date now: {today.strftime('%B %d, %Y')}")
             if today.weekday() >= 5:  # 5 = Saturday, 6 = Sunday
@@ -3446,5 +3447,32 @@ class TemplateService:
             ]
         )
 
+    async def sos_template(self, super_admin: Optional["UserDB"]) -> ResponsePayloadCollection:
+        """
+        Returns a template message to the user notifying that their SOS request
+        has been received and the admin will contact them.
+        """
+        admin_contact = []
+
+        if super_admin:
+            if super_admin.telegram_user_name:
+                admin_contact.append(f"Telegram: @{super_admin.telegram_user_name}")
+            if super_admin.phone_number:
+                admin_contact.append(f"Phone: {super_admin.phone_number}")
+
+        contact_info = "\n".join(admin_contact) if admin_contact else "Admin will contact you soon."
+
+        message_lines = [
+            "✅ Your SOS request has been received!",
+            "Our admin will get back to you shortly.",
+            "",
+            contact_info
+        ]
+
+        return ResponsePayloadCollection(
+            responses=[
+                ResponsePayload(text="\n".join(message_lines))
+            ]
+        )
 
 

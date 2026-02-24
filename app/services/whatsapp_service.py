@@ -12,12 +12,16 @@ from PIL import Image
 from fastapi import FastAPI, Request, HTTPException
 from telegram import InlineKeyboardMarkup
 
+from app.data.dto.main.ErrorLog import ErrorLogFactory
 from app.data.dto.messenger.ResponsePayload import ResponsePayloadCollection
 from app.domain.message import IncomingMessage
 from app.services.core_service import CoreService
 
 
 import logging
+
+from app.services.db_service import DbService
+
 logger = logging.getLogger(__name__)
 
 BOLD_PATTERN = re.compile(r"<b>\s*(.*?)\s*</b>", re.DOTALL)
@@ -25,10 +29,11 @@ ALLOWED_PATTERN = re.compile(r"[^A-Za-z0-9 \n\.\,\-\/\+\@\_]")
 
 class WhatsApp360DialogService:
 
-    def __init__(self, core_service: CoreService, api_key: str, v_token: str):
+    def __init__(self, core_service: CoreService, api_key: str, v_token: str,  sql_db: DbService):
         self.core_service = core_service
         self.verify_token = v_token #os.getenv("WHATSAPP_VERIFY_TOKEN")
         self.api_key = api_key #os.getenv("WHATSAPP_API_KEY")
+        self.sql_db = sql_db
 
         self.app = FastAPI()
         self._register_routes()
@@ -500,7 +505,29 @@ class WhatsApp360DialogService:
             "raw": message
         }
 
+    async def send_progress_whatsapp(self, phone: str):
+        try:
+            messages = [
+                "👀 Give me a second, I’m on it",
+                "Still working on it — checking details",
+                "Almost there. This may take a bit longer"
+            ]
+
+            for msg in messages:
+                await asyncio.sleep(15)
+                await self._send_text(phone, msg)
+
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Progress message failed: {e}")
+
     async def process_message(self, event, body):
+
+        progress_task = asyncio.create_task(
+            self.send_progress_whatsapp(event["chat_id"])
+        )
+
         try:
             msg = IncomingMessage(
                 source="whatsapp",
@@ -513,16 +540,16 @@ class WhatsApp360DialogService:
                     "message_type": event["message_type"]
                 }
             )
+
             responses = await self.core_service.handle(msg)
             await self.send_response(msg.user_id, responses)
 
-        except Exception as e:
-            exc_type, exc_value, exc_tb = sys.exc_info()
-            tb = traceback.extract_tb(exc_tb)[-1]
-            filename = tb.filename
-            line_no = tb.lineno
-            print(f"❌ Error in  <b> {filename} </b>  at line  <b> {line_no} </b> : {e}")
-
+        except Exception as ex:
+            error = ErrorLogFactory.from_exception(ex=ex, position="whatsapp_handler")
+            await self.sql_db.log_error(error)
+            await self._send_text(event["wa_id"], "The error just happened. Admins are already noticed, dont worry.")
+        finally:
+                progress_task.cancel()
 
 
     def _register_routes(self):

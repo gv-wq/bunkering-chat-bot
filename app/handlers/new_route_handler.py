@@ -1,18 +1,17 @@
 import re
-import random
-import time
 from collections import defaultdict, deque
 from uuid import UUID
 
 import math
 import asyncio
 import datetime
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional
 
 from app.data import emogye
 from app.data.dto.main.BunkeringStep import BunkeringStep
-from app.data.dto.main.Coordinates import Coordinates
-from app.data.dto.main.Fuel import Fuel
+
+from app.data.dto.main.Event import Event
+
 
 from app.data.dto.main.SeaPort import SeaPortDB
 from app.data.dto.main.SeaRoute import SeaRouteDB
@@ -171,6 +170,13 @@ class NewRouteHandler:
             menu_rc = await self.template_service.main_menu_template(session)
             finish_rc.responses.extend(menu_rc.responses)
 
+        await self.sql_db_service.create_event(Event.route_finished(
+            user_id=session.user_id,
+            payload={
+                "route_id": str(route.id),
+            },
+        ))
+
         return finish_rc
 
     async def _update_company_name(self, session: SessionDB, route: SeaRouteDB, intent_dict: Dict) -> ResponsePayloadCollection:
@@ -181,6 +187,15 @@ class NewRouteHandler:
         name = intent_dict.get("name", user.company_name)
         if name:
             user.company_name = name
+
+        await self.sql_db_service.create_event(Event.company_name_entered(
+            user_id=session.user_id,
+            payload={
+                "status": "updated",
+                "route_id": str(route.id),
+                "data": name,
+            },
+        ))
 
         new_route, err = await self.sql_db_service.update_user(str(session.user_id), {"company_name": name})
         if err or intent_dict.get("action") == "error":
@@ -225,6 +240,14 @@ class NewRouteHandler:
         if err:
             return ResponsePayloadCollection(responses=[ResponsePayload(err="Failed to update the route.")])
 
+        await self.sql_db_service.create_event(Event.supplier_price_declined(
+            user_id=session.user_id,
+            payload={
+                "status": "declined",
+                "route_id": str(route.id),
+            },
+        ))
+
         supplier_req_t = self.template_service.get_supplier_request(session, route)
 
         session, err = await self.navigation_handler.to_next_step(session)
@@ -246,6 +269,14 @@ class NewRouteHandler:
         if err:
             return ResponsePayloadCollection(responses=[ResponsePayload(err="Failed to update the route.")])
 
+        await self.sql_db_service.create_event(Event.supplier_price_requested(
+            user_id=session.user_id,
+            payload={
+                "status": "accepted",
+                "route_id": str(route.id),
+            },
+        ))
+
 
         #c1 = await self.template_service.supplier_prices_template(session, route, status=True)
 
@@ -258,15 +289,13 @@ class NewRouteHandler:
         supplier_req_t = self.template_service.get_supplier_request(session, route)
 
         c2 = None
-        #if session.current_step == RouteStepEnum.COMPANY_NAME.value and user_db.company_name:
-        #    c2 = await self.finish_route(session, route)
-        #else:
         c2 = await self.template_service.session_template(session)
 
         if c2:
             supplier_req_t.responses.extend(c2.responses)
 
         await self.send_bunekring_request_with_quote(session, route)
+
 
         return supplier_req_t
 
@@ -291,6 +320,15 @@ class NewRouteHandler:
         if not email:
             return await self.template_service.session_template(session, "Could not save your email.")
 
+        await self.sql_db_service.create_event(Event.email_entered(
+            user_id=session.user_id,
+            payload={
+                "status": "updated",
+                "route_id": str(route.id),
+                "email": email,
+            },
+        ))
+
         updated_user, err = await self.sql_db_service.update_user(str(session.user_id), {"email": email})
         if err or intent_dict.get("action") == "error":
             return await self.template_service.session_template(session, "Could not save your email.")
@@ -313,11 +351,27 @@ class NewRouteHandler:
         if len(err_messages) > 0:
             return await self.template_service.session_template(session,"\n".join(err_messages))
 
+        await self.sql_db_service.create_event(Event.email_entered(
+            user_id=session.user_id,
+            payload={
+                "status": "confirmed",
+                "route_id": str(route.id),
+                "email": user.email,
+            },
+        ))
+
         file_to_attach = await self.render_bukering_request_in_pdf(session, route)
 
         p1 = await self.template_service.user_email_template(session, route, True)
         if file_to_attach:
             p1.responses[-1].files.append(file_to_attach)
+
+        await self.sql_db_service.create_event(Event.pdf_generated(
+            user_id=session.user_id,
+            payload={
+                "route_id": str(route.id)
+            },
+        ))
 
         session, err = await self.navigation_handler.to_next_step(session)
         p2 = await self.template_service.session_template(session)
@@ -347,6 +401,12 @@ class NewRouteHandler:
         if err:
             return ResponsePayloadCollection(responses=[ResponsePayload(err="Failed to update the route.")])
 
+        await self.sql_db_service.create_event(Event.pdf_declined(
+            user_id=session.user_id,
+            payload={
+                "route_id": str(route.id)
+            },
+        ))
 
         session.current_step = RouteStepEnum.COMPANY_NAME.value
         session, err = await self.sql_db_service.update_session(session.user_id, session.current_task, session.current_step, session.route_id, session.data)
@@ -361,6 +421,14 @@ class NewRouteHandler:
         route, err = await self.sql_db_service.update_route(route)
         if err:
             return ResponsePayloadCollection(responses=[ResponsePayload(err="Failed to update the route.")])
+
+        await self.sql_db_service.create_event(Event.pdf_requested(
+            user_id=session.user_id,
+            payload={
+                "route_id": str(route.id)
+            },
+        ))
+
 
         session, err = await self.navigation_handler.to_next_step(session)
         if err:
@@ -391,6 +459,15 @@ class NewRouteHandler:
         if vessel_name:
             route.vessel_name = vessel_name
 
+        await self.sql_db_service.create_event(Event.vessel_name_entered(
+            user_id=session.user_id,
+            payload={
+                "status": "updated",
+                "data": vessel_name if vessel_name else "undefined",
+                "route_id": route.id,
+            },
+        ))
+
         new_route, err = await self.sql_db_service.update_route(route)
         if err or intent_dict.get("action") == "error":
             return await self.template_service.vessel_name_template(session, route, str(err))
@@ -403,6 +480,15 @@ class NewRouteHandler:
 
         if len(err_messages) > 0:
             return await self.template_service.vessel_name_template(session, route, "\n".join(err_messages))
+
+        await self.sql_db_service.create_event(Event.vessel_name_entered(
+            user_id=session.user_id,
+            payload={
+                "status": "confirmed",
+                "data": route.vessel_name if route.vessel_name else "undefined",
+                "route_id": route.id,
+            },
+        ))
 
         session, err = await self.navigation_handler.to_next_step(session, )
         return await self.template_service.session_template(session)
@@ -428,6 +514,15 @@ class NewRouteHandler:
         if imo_number:
             route.imo_number = imo_number
 
+        await self.sql_db_service.create_event(Event.vessel_imo_entered(
+            user_id=session.user_id,
+            payload={
+                "status": "update",
+                "data": route.imo_number if route.imo_number else "undefined",
+                "route_id": route.id,
+            },
+        ))
+
         new_route, err = await self.sql_db_service.update_route(route)
         if err or intent_dict.get("action") == "error":
             return await self.template_service.vessel_imo_template(session, route, str(err))
@@ -448,6 +543,15 @@ class NewRouteHandler:
 
         if len(err_messages) > 0:
             return await self.template_service.vessel_imo_template(session, route, "\n".join(err_messages))
+
+        await self.sql_db_service.create_event(Event.vessel_imo_entered(
+            user_id=session.user_id,
+            payload={
+                "status": "confirmed",
+                "data": route.imo_number if route.imo_number else "undefined",
+                "route_id": route.id,
+            },
+        ))
 
         session, err = await self.navigation_handler.to_next_step(session )
         return await self.template_service.session_template(session, str(err) if err else None)
@@ -514,6 +618,14 @@ class NewRouteHandler:
             candidate = None
             suggestions = []
             candidate, suggestions, err = self.sql_db_service.search_port_with_suggestions(intent['query'])
+            t, err_t = await self.sql_db_service.create_event(Event.port_searched(
+                user_id=session.user_id,
+                payload={
+                    "query": intent['query'],
+                    "locode_found": candidate.locode if candidate else "not found",
+                    "route_id": str(route.id),
+                },
+            ))
             # if all([not err, new_candidate, new_suggestions]):
             #     candidate = new_candidate
             #     suggestions = new_suggestions
@@ -529,8 +641,28 @@ class NewRouteHandler:
 
         if candidate:
             # 1. SeaRoute nearby
-            searoute_nearby, _ = await self.searoute_api.get_nearest_port_to_coordinates(candidate.latitude, candidate.longitude, {"limit": 25}, )
+            searoute_nearby, searoute_err = await self.searoute_api.get_nearest_port_to_coordinates(candidate.latitude, candidate.longitude, {"limit": 25}, )
             searoute_nearby = searoute_nearby or []
+
+            t, err_t = await self.sql_db_service.create_event(Event.searoute_nearest(
+                user_id=session.user_id,
+                payload={
+                    "port_locode": candidate.locode if candidate else "not found",
+                    "route_id": str(route.id),
+                },
+            ))
+
+            if searoute_err:
+                await self.sql_db_service.create_event(Event.searoute_error(
+                    user_id=session.user_id,
+                    payload={
+                        "locode": candidate.locode,
+                        "latitude": candidate.latitude,
+                        "longitude": candidate.longitude,
+                        "route_id": str(route.id),
+                        "error": searoute_err
+                    },
+                ))
 
             # 2. Bulk DB fetch
             db_ports, _ = await self.sql_db_service.get_ports_by_locodes({p.locode for p in searoute_nearby if p.locode})
@@ -889,24 +1021,6 @@ class NewRouteHandler:
             return await self._handle_unknown_intent(session, route, intent)
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     # -------------------- fuel prices --------------------
 
     async def find_fuel_price(
@@ -976,8 +1090,8 @@ class NewRouteHandler:
                     "quantity": None,
                 }
 
-            #if prices_count == 0 and not port.locode in take_anyway:
-            #    return None
+            if prices_count == 0 and not port.locode in take_anyway:
+               return None
 
             return {
                 "port": port,
@@ -1021,7 +1135,7 @@ class NewRouteHandler:
 
     async def collect_ports_parallel(
             self,
-            sea_route,
+            searoute,
             radius_km: float = 500.0,
             limit: int = 50,
             step: int = 50,
@@ -1055,13 +1169,41 @@ class NewRouteHandler:
         # ) for wp in sea_route.waypoints]]
         # tasks = [process_chunk(c) for c in coords]
 
-        tasks = [ process_chunk(chunk) for chunk in utils.chunk_coords(sea_route.seaRouteCoordinates, step, chunk_size)]
+        tasks = [ process_chunk(chunk) for chunk in utils.chunk_coords(searoute.seaRouteCoordinates, step, chunk_size)]
 
         await asyncio.gather(*tasks)
 
         ports = list(seen.values())
         ports.sort(key=lambda p: getattr(p, "_distance_km", float("inf")))
-        utils.unique_ports(ports)
+        ports = utils.unique_ports(ports)
+
+
+        # fetch ports in the groups
+        group_ports = await self.get_ports_via_group(ports)
+        ports.extend(group_ports)
+        ports = utils.unique_ports(ports)
+        return ports, [port.locode for port in group_ports]
+
+
+    async def get_ports_via_group(self, ports: List[SeaPortDB]):
+        group_ids = set()
+        for p in ports:
+            port_groups, err = await self.sql_db_service.get_port_groups(p.locode)
+            if port_groups and not err:
+                [group_ids.add(p.group_id) for p in port_groups]
+
+        group_ports = []
+        for group_id in list(group_ids):
+            r, err = await self.sql_db_service.get_group_ports(group_id)
+            if r and not err:
+                group_ports.extend(r)
+
+        ports = []
+        for g in group_ports:
+            port, err = await self.sql_db_service.get_port_by_locode(g.port_locode)
+            if port and not err:
+                ports.append(port)
+
         return ports
 
     def find_nearest_coord_index(self, step, coordinates) -> int:
@@ -1504,32 +1646,17 @@ class NewRouteHandler:
     #
     #     return selected
 
-
-
     def select_ports_zigzag2(
             self,
             steps_dicts: list,
             departure_port,
             destination_port,
+            take_anyway,
             max_ports: int = 20,
             max_per_country: int = 2,
             top_n_marked: int = 3,
     ):
-        """
-        Selection rules:
-
-        - manual_input=True ports:
-            * ignore ALL limits
-            * always included
-
-        - other ports:
-            * respect max_ports
-            * respect max_per_country
-
-        - departure & destination always included
-        - no duplicates
-        - cheapest ports marked
-        """
+        from collections import defaultdict, deque
 
         def country_of(step):
             return step["port"].country_name or "unknown"
@@ -1541,104 +1668,79 @@ class NewRouteHandler:
         selected_ids = set()
         country_counts = defaultdict(int)
 
+        take_anyway_set = set(take_anyway)
+
         # ---------------------------------------------------
-        # 1️⃣ Add ALL manual ports (ignore limits completely)
+        # 1️⃣ Add ALL manual_input ports and take_anyway ports
         # ---------------------------------------------------
         for step in steps_dicts:
-            if getattr(step["port"], "manual_input", False):
-                port_id = step["port"].id
+            port = step["port"]
+            port_id = port.id
+            if getattr(port, "manual_input", False) or getattr(port, "locode", "") in take_anyway_set:
                 if port_id not in selected_ids:
                     selected.append(step)
                     selected_ids.add(port_id)
-                    # DO NOT count toward country limits
+                    # Do not count towards country limits
 
         # ---------------------------------------------------
-        # 2️⃣ Add departure & destination (respect country count only if not manual)
+        # 2️⃣ Ensure departure & destination are included
         # ---------------------------------------------------
-        dep_dest_ids = {departure_port.id, destination_port.id}
-
-        for step in steps_dicts:
-            port_id = step["port"].id
-            if port_id in dep_dest_ids and port_id not in selected_ids:
-                selected.append(step)
-                selected_ids.add(port_id)
-
-                if not getattr(step["port"], "manual_input", False):
-                    country_counts[country_of(step)] += 1
+        for special_port in [departure_port, destination_port]:
+            if special_port.id not in selected_ids:
+                # Try to find corresponding step
+                step = next((s for s in steps_dicts if s["port"].id == special_port.id), None)
+                if step:
+                    selected.append(step)
+                    selected_ids.add(special_port.id)
+                    # Count country if not manual/take_anyway
+                    if not getattr(step["port"], "manual_input", False) and step["port"].locode not in take_anyway_set:
+                        country_counts[country_of(step)] += 1
 
         # ---------------------------------------------------
-        # 3️⃣ Select NON-manual ports with limits
+        # 3️⃣ Select remaining ports with zigzag and limits
         # ---------------------------------------------------
         remaining = [
             s for s in steps_dicts
-            if s["port"].id not in selected_ids
-               and not getattr(s["port"], "manual_input", False)
+            if s["port"].id not in selected_ids and not getattr(s["port"], "manual_input", False)
         ]
 
-        # Phase 1 — cheapest first (country limited)
-        remaining.sort(key=lambda s: s.get("prices_sum") or float("inf"))
+        # Zigzag: sort by distance first
+        remaining.sort(key=distance_of)
+        dq = deque(remaining)
+        toggle = True
 
-        for step in remaining:
-            if len([s for s in selected if not getattr(s["port"], "manual_input", False)]) >= max_ports:
+        while dq:
+            non_manual_count = len([s for s in selected if not getattr(s["port"], "manual_input", False)])
+            if non_manual_count >= max_ports:
                 break
 
+            step = dq.popleft() if toggle else dq.pop()
             country = country_of(step)
             if country_counts[country] < max_per_country:
                 selected.append(step)
                 selected_ids.add(step["port"].id)
                 country_counts[country] += 1
 
-        # Phase 2 — zigzag by distance
-        if len([s for s in selected if not getattr(s["port"], "manual_input", False)]) < max_ports:
-
-            remaining = [
-                s for s in steps_dicts
-                if s["port"].id not in selected_ids
-                   and not getattr(s["port"], "manual_input", False)
-            ]
-
-            remaining.sort(key=distance_of)
-            dq = deque(remaining)
-            toggle = True
-
-            while dq:
-                non_manual_count = len(
-                    [s for s in selected if not getattr(s["port"], "manual_input", False)]
-                )
-                if non_manual_count >= max_ports:
-                    break
-
-                step = dq.popleft() if toggle else dq.pop()
-                country = country_of(step)
-
-                if country_counts[country] < max_per_country:
-                    selected.append(step)
-                    selected_ids.add(step["port"].id)
-                    country_counts[country] += 1
-
-                toggle = not toggle
+            toggle = not toggle
 
         # ---------------------------------------------------
         # 4️⃣ Mark cheapest ports globally
         # ---------------------------------------------------
-        valid_prices = [
-            s.get("prices_sum")
-            for s in steps_dicts
-            if s.get("prices_sum") is not None
-        ]
-
+        valid_prices = [s.get("prices_sum") for s in steps_dicts if s.get("prices_sum") is not None]
         cheapest_prices = set(sorted(valid_prices)[:top_n_marked])
-
         for s in steps_dicts:
             if s.get("prices_sum") in cheapest_prices:
                 s["marked"] = True
 
         # ---------------------------------------------------
-        # 5️⃣ Final sort by distance
+        # 5️⃣ Final sort: departure first, destination last, others by distance
         # ---------------------------------------------------
-        selected.sort(key=distance_of)
+        dep_step = next(s for s in selected if s["port"].id == departure_port.id)
+        dest_step = next(s for s in selected if s["port"].id == destination_port.id)
+        middle_steps = [s for s in selected if s["port"].id not in {departure_port.id, destination_port.id}]
+        middle_steps.sort(key=distance_of)
 
-        return selected
+        return [dep_step, *middle_steps, dest_step]
 
     # -------------------- full pipeline --------------------
 
@@ -1681,10 +1783,9 @@ class NewRouteHandler:
         return steps_dicts
 
 
-
-
     async def build_bunkering_plan_fast(
             self,
+            user_id,
             departure_port,
             destination_port,
             fuels,
@@ -1692,20 +1793,59 @@ class NewRouteHandler:
             departure_dt: datetime.datetime = datetime.datetime.now(),
             is_plan: bool = False,
     ):
-        sea_route, err = await self.searoute_api.build_sea_route(
-            departure_port.latitude,
-            departure_port.longitude,
-            destination_port.latitude,
-            destination_port.longitude,
-            speed_in_knots=speed_kts,
-            is_plan=is_plan,
-            departure_dt=departure_dt,
-        )
-        if err:
-            return None, None, str(err)
+        sea_route = None
 
-        ports = await self.collect_ports_parallel(sea_route=sea_route)
-        ports_per_country, err = await self.country_finder.do_job(sea_route.seaRouteCoordinates)
+        route, err = await self.sql_db_service.get_route_by_ports_id(departure_port.id, destination_port.id)
+        if route and not err:
+            sea_route = route.data.full_response
+
+
+        if sea_route is not None:
+            await self.sql_db_service.create_event(Event.searoute_data_reuse(
+                user_id,
+                {
+                    "departure_locode": departure_port.locode,
+                    "destination_locode": destination_port.locode,
+                    "route_id": str(route.id),
+                }))
+
+        if sea_route is None:
+            sea_route, err = await self.searoute_api.build_sea_route(
+                departure_port.latitude,
+                departure_port.longitude,
+                destination_port.latitude,
+                destination_port.longitude,
+                speed_in_knots=speed_kts,
+                is_plan=is_plan,
+                departure_dt=departure_dt,
+            )
+
+            if err:
+                await self.sql_db_service.create_event(Event.searoute_plan_error(
+                    user_id,
+                    {
+                        "departure_locode": departure_port.locode,
+                        "destination_locode": destination_port.locode,
+                        "route_id": str(route.id),
+                        "error": str(err)
+                    }))
+
+                return None, None, str(err)
+
+            await self.sql_db_service.create_event(Event.searoute_plan(
+                user_id,
+                {
+                    "departure_locode": departure_port.locode,
+                    "destination_locode": destination_port.locode,
+                    "route_id": str(route.id),
+                }))
+
+
+        if sea_route is None:
+            return None, None, "Could not build a path for this route."
+
+        ports, locodes = await self.collect_ports_parallel(searoute=sea_route)
+        #ports_per_country, err = await self.country_finder.do_job(sea_route.seaRouteCoordinates)
 
 
 
@@ -1714,23 +1854,24 @@ class NewRouteHandler:
 
         ports = [departure_port, *ports, destination_port]
 
-        if ports_per_country and not err:
-            ports.extend(ports_per_country)
+        #if ports_per_country and not err:
+        #    ports.extend(ports_per_country)
 
         ports = utils.unique_ports(ports)
+        take_anyway = [departure_port.locode, destination_port.locode, *locodes]
 
         steps_dicts = await self.build_bunkering_steps(
             ports=ports,
             fuels=fuels,
             price_date=datetime.date.today(), #TODO
-            take_anyway=[departure_port.locode, destination_port.locode],
+            take_anyway=take_anyway,
         )
 
         await self.enrich_ports_with_eta_and_distance_fast(steps_dicts, sea_route)
 
-        #zigzag_steps = self.select_ports_zigzag2(steps_dicts, departure_port, destination_port, max_ports=50, max_per_country=2, top_n_marked = 3)
+        zigzag_steps = self.select_ports_zigzag2(steps_dicts, departure_port, destination_port, take_anyway =take_anyway,  max_ports=50, max_per_country=2, top_n_marked = 3)
 
-        zigzag_steps =  self.tttt(steps_dicts, departure_port, destination_port)
+        #zigzag_steps =  self.tttt(steps_dicts, departure_port, destination_port)
 
         # Convert dicts to BunkeringStep objects
         bunkering_steps: List[BunkeringStep] = []
@@ -1748,7 +1889,7 @@ class NewRouteHandler:
             )
             bunkering_steps.append(bunkering_step)
 
-        return bunkering_steps, sea_route.seaRouteCoordinates, None
+        return bunkering_steps, sea_route, None
 
     async def _build_the_bunkering_plan(self, session: SessionDB, route: SeaRouteDB, intent: Dict) -> ResponsePayloadCollection:
         departure_port, err = await self.sql_db_service.get_port_by_id(route.departure_port_id)
@@ -1762,7 +1903,8 @@ class NewRouteHandler:
         if not route.fuels:
             return await self.template_service.session_template(session, " <b> Please, select at least one fuel type. </b> ")
 
-        bunkering_steps, coords, err = await self.build_bunkering_plan_fast(
+        bunkering_steps, searoute, err = await self.build_bunkering_plan_fast(
+            user_id=session.user_id,
             departure_port=departure_port,
             destination_port=destination_port,
             fuels=route.fuels,
@@ -1774,12 +1916,20 @@ class NewRouteHandler:
             return ResponsePayloadCollection(responses=[ResponsePayload(err=err)])
 
         route.bunkering_steps = bunkering_steps
-        route.data.departure_to_destination_coordinates = coords
+        route.data.full_response = searoute
+        route.data.departure_to_destination_coordinates = searoute.seaRouteCoordinates
         route.data.is_updating = False
 
         route_new, err = await self.sql_db_service.update_route(route)
         if err:
             return ResponsePayloadCollection(responses=[ResponsePayload(err=err)])
+
+        await self.sql_db_service.create_event(Event.route_built(
+            session.user_id,
+            {
+                "departure_locode": departure_port.locode,
+                "destination_locode": destination_port.locode,
+            }))
 
         session, err = await self.navigation_handler.to_next_step(session)
         return await self.template_service.build_universal_bunkering_template(session, route)
@@ -2095,7 +2245,7 @@ class NewRouteHandler:
     ) -> ResponsePayloadCollection:
         session.current_task = RouteTaskEnum.MAIN_MENU.value
         session.current_step = None
-        route.data = SeaRouteData()
+        route.data = SeaRouteData(full_response=None)
         session.route_id = None
         session, err = await self._update_session(session, route.user_id)
         return ResponsePayloadCollection(

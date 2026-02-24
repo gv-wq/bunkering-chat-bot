@@ -56,6 +56,6 @@ NUM3 = "3️⃣"
 
 OIL_STATION = "⛽"
 HOME = "🏠"
-
+SOS = "🆘"
 
 

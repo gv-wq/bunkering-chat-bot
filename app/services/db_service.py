@@ -12,6 +12,8 @@ from psycopg2.pool import SimpleConnectionPool
 from psycopg2.extras import RealDictCursor
 
 from app.data.dto.main.Coordinates import Coordinates
+from app.data.dto.main.ErrorLog import ErrorLog
+from app.data.dto.main.Event import Event, EventDB
 from app.data.dto.main.Fuel import FuelDB
 from app.data.dto.main.MabuxPortLocodeMap import MabuxPortLocodeMap, MabuxPortLocodeMapDB
 from app.data.dto.main.MabuxPortFuelPrice import MabuxPortFuelPrice, MabuxPortFuelPriceDB
@@ -24,6 +26,7 @@ from app.data.dto.main.TariffSelection import TariffSelection
 from app.data.dto.main.User import UserDB
 from app.data.dto.main.UserTariff import UserTariffBD
 from app.data.dto.searoute.SearoutePort import SearoutePort
+from app.data.dto.main.PortGroup import PortGroupDB
 from app.services.utils import utils
 
 KM_PER_DEG_LAT = 111.32  # approximate km per degree latitude
@@ -690,6 +693,9 @@ class DbService:
                 route.id,
                 session.data,
             )
+
+            await self.create_event(Event.route_started(str(session.user_id)))
+
             return route, None
 
     async def get_route_by_id(
@@ -701,6 +707,21 @@ class DbService:
                 row = await conn.fetchrow(
                     "SELECT * FROM routes WHERE id = $1",
                     uuid.UUID(route_id),
+                )
+                if not row:
+                    return None, "Route not found"
+                return SeaRouteDB.from_db_row(row), None
+        except Exception as e:
+            return None, f"Route fetch error: {str(e)}"
+
+
+    async def get_route_by_ports_id(self, id1, id2):
+        try:
+            async with self.connection_pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT * FROM routes WHERE departure_port_id = $1 AND destination_port_id = $2",
+                    uuid.UUID(id1),
+                    uuid.UUID(id2),
                 )
                 if not row:
                     return None, "Route not found"
@@ -1120,7 +1141,7 @@ created_at DESC
                 "fuels": json.dumps([fuel.model_dump() for fuel in route.fuels]),
                 "bunkering_steps": json.dumps([step.model_dump() for step in route.bunkering_steps]),
                 "map_image_bytes": route.map_image_bytes,
-                "data": json.dumps(route.data.model_dump()),
+                "data": json.dumps(route.data.to_dict()),
                 "departure_nearby_image": route.departure_nearby_image,
                 "departure_suggestion_image": route.departure_suggestion_image,
                 "destination_nearby_image": route.destination_nearby_image,
@@ -2510,3 +2531,164 @@ SELECT * FROM inserted;
         except Exception as e:
             return None, str(e)
 
+
+
+    async def get_port_groups(self, locode: str):
+        try:
+            async with self.connection_pool.acquire() as conn:
+                q = """ SELECT * FROM public.port_group WHERE port_locode = $1"""
+                rows = await conn.fetch(q, locode)
+                if rows:
+                    return PortGroupDB.from_list(rows), None
+                else:
+                    return None, "Failed to fetch "
+        except Exception as e:
+            return None, f"Database error: {str(e)}"
+
+    async def get_group_ports(self, _id: int):
+        try:
+            async with self.connection_pool.acquire() as conn:
+                q = """SELECT * FROM public.port_group WHERE group_id = $1"""
+                rows = await conn.fetch(q, _id)
+                if rows:
+                    return PortGroupDB.from_list(rows), None
+                else:
+                    return None, "Failed to fetch "
+
+        except Exception as e:
+            return None, f"Database error: {str(e)}"
+
+
+    async def create_event(self, event: Event) -> Tuple[Optional[EventDB], Optional[str]]:
+        query = """
+           INSERT INTO event (id, user_id, type, timestamp, json)
+           VALUES (gen_random_uuid(), $1, $2, $3, $4)
+           RETURNING *;
+           """
+        try:
+            async with self.connection_pool.acquire() as conn:
+                row = await conn.fetchrow(query, event.user_id, event.type.value, event.timestamp, json.dumps(event.j))
+                return EventDB.from_db_row(row), None
+        except Exception as e:
+            return None, str(e)
+
+
+    async def get_events(
+            self,
+            user_id: Optional[UUID] = None,
+            event_type: Optional[str] = None,
+            start: Optional[datetime] = None,
+            end: Optional[datetime] = None,
+            limit: int = 50,
+            offset: int = 0,
+    ) -> Tuple[List[EventDB], Optional[str]]:
+        filters = []
+        params = []
+
+        if user_id:
+            params.append(user_id)
+            filters.append(f"user_id = ${len(params)}")
+
+        if event_type:
+            params.append(event_type)
+            filters.append(f"type = ${len(params)}")
+
+        if start:
+            params.append(start)
+            filters.append(f"timestamp >= ${len(params)}")
+
+        if end:
+            params.append(end)
+            filters.append(f"timestamp <= ${len(params)}")
+
+        where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
+        query = f"""
+           SELECT * FROM event
+           {where_clause}
+           ORDER BY timestamp DESC
+           LIMIT {limit} OFFSET {offset};
+           """
+
+        try:
+            async with self.connection_pool.acquire() as conn:
+                rows = await conn.fetch(query, *params)
+                return [EventDB.from_db_row(r) for r in rows], None
+        except Exception as e:
+            return [], str(e)
+
+
+    async def get_event_by_id(self, event_id: UUID) -> Tuple[Optional[EventDB], Optional[str]]:
+        try:
+            async with self.connection_pool.acquire() as conn:
+                row = await conn.fetchrow("SELECT * FROM event WHERE id = $1", event_id)
+                if not row:
+                    return None, None
+                return EventDB.from_db_row(row), None
+        except Exception as e:
+            return None, str(e)
+
+        # --- Update event JSON or type ---
+
+    async def update_event(
+            self, event_id: UUID, new_json: Optional[dict] = None, new_type: Optional[str] = None
+    ) -> Tuple[Optional[EventDB], Optional[str]]:
+        set_clauses = []
+        params = []
+        if new_json is not None:
+            params.append(new_json)
+            set_clauses.append(f"json = ${len(params)}")
+        if new_type is not None:
+            params.append(new_type)
+            set_clauses.append(f"type = ${len(params)}")
+        if not set_clauses:
+            return None, "Nothing to update"
+
+        params.append(event_id)
+        query = f"""
+           UPDATE event
+           SET {', '.join(set_clauses)}, updated_at = now()
+           WHERE id = ${len(params)}
+           RETURNING *;
+           """
+        try:
+            async with self.connection_pool.acquire() as conn:
+                row = await conn.fetchrow(query, *params)
+                if not row:
+                    return None, "Event not found"
+                return EventDB.from_db_row(row), None
+        except Exception as e:
+            return None, str(e)
+
+
+    async def delete_event(self, event_id: UUID) -> Optional[str]:
+        try:
+            async with self.connection_pool.acquire() as conn:
+                result = await conn.execute("DELETE FROM event WHERE id = $1", event_id)
+                if result == "DELETE 0":
+                    return "Event not found"
+                return None
+        except Exception as e:
+            return str(e)
+
+    async def log_error(self, error: ErrorLog):
+        query = """
+        INSERT INTO error_log (
+            file, line, function, position,
+            error_type, message, traceback, timestamp
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+        RETURNING id;
+        """
+
+        async with self.connection_pool.acquire() as conn:
+            return await conn.fetchval(
+                query,
+                error.file,
+                error.line,
+                error.function,
+                error.position,
+                error.error_type,
+                error.message,
+                error.traceback,
+                error.timestamp
+            )

@@ -1,8 +1,10 @@
 import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.data.dto.main.Event import Event
 from app.data.dto.searoute.SearoutePath import SearoutePath
 from app.data.dto.searoute.SearoutePort import SearoutePort
+from app.services.db_service import DbService
 from app.services.utils.HttpClient import HTTPClient
 from urllib.parse import urlencode
 
@@ -35,6 +37,7 @@ class SearouteApi:
             "limit": limit,
            # "radius": radius
         }
+
 
         # Make the request using the wrapper
         result, error = await self.http_client.get_cut_by_timeout(endpoint, params=query_params, max_retries=6, timeout=500, pause=0.3)

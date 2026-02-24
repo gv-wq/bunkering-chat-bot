@@ -121,7 +121,8 @@ async def main():
     telegram_service = TelegramService(
         token=require("TELEGRAM_BOT_TOKEN"),
         ai_service=ai_service,
-        core_service=core_service
+        core_service=core_service,
+        sql_db=sql_db_service
     )
 
     core_service.set_bot(telegram_service.get_bot())
@@ -129,7 +130,8 @@ async def main():
     whatsapp_service = WhatsApp360DialogService(
         core_service=core_service,
         api_key=require("_360_DIALOG_API_KEY"),
-        v_token=require("_360_DIALOG_API_TOKEN")
+        v_token=require("_360_DIALOG_API_TOKEN"),
+        sql_db=sql_db_service
     )
 
     await asyncio.gather(

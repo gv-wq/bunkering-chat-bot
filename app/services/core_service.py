@@ -1,30 +1,19 @@
-from io import BytesIO
 from typing import Dict, Tuple, Optional
-
-from telegram import Update, InputFile
-from telegram.ext import ContextTypes
-from telegram import Update, InputMediaPhoto
 from app.data import emogye
-from app.data.dto.main.SessionData import SessionData, RouteSearch
-from app.data.dto.main.TariffSelection import TariffSelection
+from app.data.dto.main.Event import Event
 from app.data.dto.main.User import UserDB
-from app.data.enums.RouteStep import RouteStepEnum
 from app.data.enums.StartStepEnum import StartStepEnum
 from app.domain.message import IncomingMessage
-from app.domain.response import OutgoingResponse
 from app.handlers.admin_handler import AdminHandler
 from app.handlers.update_tariff_handler import UpdateTariffHandler
-from app.services.external_api.bubble_api import BubbleApi
 from app.services.external_api.searoute_api import SearouteApi
 from app.services.internal_api.map_builder_api import MapBuilderApi
-
 from app.data.dto.main.Session import SessionDB
 from app.data.dto.messenger.ResponsePayload import (
     ResponsePayload,
     ResponsePayloadCollection,
 )
 from app.data.enums.RouteTask import RouteTaskEnum
-
 from app.handlers.main_menu_handler import MainMenuHandler
 from app.handlers.navigation_handler import NavigationHandler
 from app.handlers.new_route_handler import NewRouteHandler
@@ -36,7 +25,6 @@ from app.services.template.telegram_template_service import TemplateService
 from app.services.utils import utils
 from app.services.utils.island_projection import IslandProjection
 from app.services.utils.near_country_search import RouteCountryFinder
-
 
 class CoreService:
     def __init__(
@@ -209,18 +197,26 @@ class CoreService:
             if not self.tg_bot:
                 return
 
-            await self.tg_bot.send_message(chat_id=super_admin.telegram_effective_chat_id, text=message)
+            await self.tg_bot.bot.send_message(chat_id=super_admin.telegram_effective_chat_id, text=message)
 
-        except Exception:
+        except Exception as ex:
             pass
 
     async def handle(self, msg: IncomingMessage, start_status: bool = False) -> ResponsePayloadCollection:
+
         if not utils.is_valid_message(msg.text):
             return ResponsePayloadCollection(responses=[ResponsePayload(text=f"{emogye.BRITAIN_FLAG}/{emogye.USA_FLAG} language please. Chars and digits.")])
 
         user_db, err = await self.get_or_create_user(msg)
         if not user_db or err:
             return ResponsePayloadCollection(responses=[ResponsePayload(text="could not register  you, something went wrong")])
+
+        t, err = await self.sql_db_service.create_event(Event.new_message(
+            user_id=user_db.id,
+            payload={
+                "message": msg.text,
+            },
+        ))
 
         if not user_db.is_active:
             return ResponsePayloadCollection(responses=[ResponsePayload(text="Sorry, yor account was suspended.\n Please contact +971 58 584 6441 to get help.")])
@@ -244,7 +240,6 @@ class CoreService:
         if user_tariff.exceeded(user_db.route_count, user_db.message_count) and not user_db.is_admin is True:
             intent["update_tariff"] = True
 
-
         if user_db.message_count == 0:
             intent["is_start"] = True
 
@@ -257,7 +252,7 @@ class CoreService:
         response = await self._handle_session_flow(user_db, session, intent, msg.text)
 
         message_count = user_db.message_count + 1
-        user_db, err = await self.sql_db_service.update_user(str(user_db.id), {"message_count": message_count})
+        await self.sql_db_service.update_user(str(user_db.id), {"message_count": message_count})
         return response
 
 
@@ -267,6 +262,9 @@ class CoreService:
 
         if intent.get("is_start", None):
             session, err = await self.sql_db_service.update_session(session.user_id, RouteTaskEnum.START.value,None, None, session.data)
+
+        if intent.get("is_sos", None):
+            return await self.handle_sos(user, session)
 
         if intent["main_menu"]:
             if session.current_step in (StartStepEnum.ROLE.value, StartStepEnum.USER_NAME.value):
@@ -318,6 +316,59 @@ class CoreService:
                 responses=[
                     ResponsePayload(
                         text="Seems like I dont know what to do =)."
+                    )
+                ]
+            )
+
+    async def handle_sos(self, user: "UserDB", session: "SessionDB") -> ResponsePayloadCollection:
+        try:
+            # Get super admin
+            super_admin, err = await self.sql_db_service.get_user_by_telegram_name("gee_vo")
+            if err or not super_admin or not super_admin.telegram_effective_chat_id:
+                # fallback: return template even if admin info is missing
+                return await self.template_service.sos_template(super_admin)
+
+            # Collect user info
+            fields = ["SOS!"]
+
+            if user.telegram_user_name:
+                fields.append(f"Telegram: @{user.telegram_user_name}")
+            if user.first_name:
+                fields.append(f"First Name: {user.first_name}")
+            if user.last_name:
+                fields.append(f"Last Name: {user.last_name}")
+            if user.phone_number:
+                fields.append(f"Phone: {user.phone_number}")
+            if user.email:
+                fields.append(f"Email: {user.email}")
+            if user.whatsapp_name:
+                fields.append(f"WhatsApp Name: {user.whatsapp_name}")
+            if user.whatsapp_phone:
+                fields.append(f"WhatsApp Phone: {user.whatsapp_phone}")
+            if user.whatsapp_business_id:
+                fields.append(f"WhatsApp Business ID: {user.whatsapp_business_id}")
+            if user.whatsapp_effective_chat:
+                fields.append(f"WhatsApp Chat: {user.whatsapp_effective_chat}")
+
+            # Compose message to admin
+            message = "📱 New SOS request!\n\n" + "\n".join(fields)
+
+            # Send to super admin
+            await self.tg_bot.bot.send_message(chat_id=super_admin.telegram_effective_chat_id, text=message)
+
+            await self.sql_db_service.create_event(Event.sos_requested(
+                user_id=session.user_id,
+                payload={},
+            ))
+
+            # Return template for user confirmation
+            return await self.template_service.sos_template(super_admin)
+
+        except Exception as e:
+            return ResponsePayloadCollection(
+                responses=[
+                    ResponsePayload(
+                        text="Sorry, something went wrong while sending your SOS request. Please text to @gee_vo or call +971585846441."
                     )
                 ]
             )

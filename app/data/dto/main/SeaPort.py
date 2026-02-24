@@ -166,7 +166,6 @@ class SeaPortDB(SeaPortBubble):
         )
 
 
-
     def to_indexed2(self, index: str, color: str, size: str, overlap: bool) -> "SeaPortIndexed2":
         return SeaPortIndexed2(
             id=self.id,
@@ -191,7 +190,8 @@ class SeaPortDB(SeaPortBubble):
             mabux_id=self.mabux_id,
             truck_status=self.truck_status,
             barge_status=self.barge_status,
-            agent_contact_list=self.agent_contact_list
+            agent_contact_list=self.agent_contact_list,
+            manual_input=self.manual_input
         )
 
     def format_port(self, status: bool | None = None, update_status: bool = False):

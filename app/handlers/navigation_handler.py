@@ -186,6 +186,8 @@ class NavigationHandler:
                 #navigation_lines.append("Available steps:")
                 #navigation_lines.extend(available_jumps)
         navigation_lines.append("menu — Main menu")
+        navigation_lines.append("")
+        navigation_lines.append("Sos! - call the admin")
         return "\n".join(navigation_lines)
 
     def get_navigation_keyboard(self, current_step: Optional[str] = None) -> InlineKeyboardMarkup:
@@ -205,6 +207,8 @@ class NavigationHandler:
             InlineKeyboardButton("🏠 Menu", callback_data="menu")
         )
 
+        buttons.append(InlineKeyboardButton(f"{emogye.SOS} Sos!", callback_data="SOS")  )
+
         return InlineKeyboardMarkup([buttons])
 
     def get_menu_keyboard(self)-> InlineKeyboardMarkup:
@@ -217,7 +221,9 @@ class NavigationHandler:
             InlineKeyboardButton("✅ Yes", callback_data="yes"),
             InlineKeyboardButton("🗑️ Remove", callback_data="remove"),
             InlineKeyboardButton("⬅ Back", callback_data="back"),
-            InlineKeyboardButton("🏠 Menu", callback_data="menu")
+            InlineKeyboardButton("🏠 Menu", callback_data="menu"),
+            InlineKeyboardButton(f"{emogye.SOS} Sos!", callback_data="SOS")
+
         ]])
 
 
@@ -225,13 +231,15 @@ class NavigationHandler:
         return InlineKeyboardMarkup([[
             InlineKeyboardButton(f"{emogye.SHIP} New route", callback_data="1"),
             InlineKeyboardButton(f"{emogye.CALENDAR} My routes", callback_data="2"),
-            InlineKeyboardButton(f"{emogye.STATS_LINE} Port prices", callback_data="3")
+            InlineKeyboardButton(f"{emogye.STATS_LINE} Port prices", callback_data="3"),
+            InlineKeyboardButton(f"{emogye.SOS} Sos!", callback_data="SOS")
         ]])
 
     def get_yes_no_keyboard(self, ) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup([[
             InlineKeyboardButton(f"{emogye.CHECK_GREEN_BACKGROUND} Yes", callback_data="yes"),
             InlineKeyboardButton(f"{emogye.CROSS_RED} No", callback_data="no"),
+            InlineKeyboardButton(f"{emogye.SOS} Sos!", callback_data="SOS")
         ]])
 
     def get_yes_no_back_keyboard(self)  -> InlineKeyboardMarkup:
@@ -239,12 +247,14 @@ class NavigationHandler:
             InlineKeyboardButton(f"{emogye.CHECK_GREEN_BACKGROUND} Yes", callback_data="yes"),
             InlineKeyboardButton(f"{emogye.CROSS_RED} No", callback_data="no"),
             InlineKeyboardButton("⬅ Back", callback_data="back"),
+            InlineKeyboardButton(f"{emogye.SOS} Sos!", callback_data="SOS")
         ]])
 
 
     def get_to_main_menu_keyboard(self, session: SessionDB) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup([[
             InlineKeyboardButton(f"{emogye.HOME} Menu", callback_data="menu"),
+            InlineKeyboardButton(f"{emogye.SOS} Sos!", callback_data="SOS")
         ]])
 
     def get_show_route_navigation_keyboard(self, session: SessionDB) -> InlineKeyboardMarkup:
@@ -252,6 +262,7 @@ class NavigationHandler:
             InlineKeyboardButton(f"+", callback_data="+"),
             InlineKeyboardButton(f"-", callback_data="-"),
             InlineKeyboardButton(f"{emogye.HOME} Menu", callback_data="menu"),
+            InlineKeyboardButton(f"{emogye.SOS} Sos!", callback_data="SOS")
         ]])
 
     def get_role_choice_keyboard(self) -> InlineKeyboardMarkup:

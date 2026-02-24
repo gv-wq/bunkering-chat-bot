@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime, timedelta
 from typing import List, Optional
 
+from app.data.dto.main.Event import Event
 from app.data.dto.main.MabuxPortFuelPrice import MabuxPortFuelPriceDB
 from app.data.dto.main.PortFuelPrice import PortFuelPrice
 from app.data.dto.main.SeaPort import SeaPortDB
@@ -192,7 +193,24 @@ class SeaportHandler:
             #return await self.template_service.get_port_fuel_price_template(session, "Could not fetch port name")
 
         port, ports, err = self.sql_db_service.search_port_with_suggestions(intent.get('locode', message))
+
+
+        await self.sql_db_service.create_event(Event.port_searched(
+            user_id=session.user_id,
+            payload={
+                "locode": port.locode,
+                "query": intent.get('locode', message),
+            },
+        ))
+
         if err or not port:
+            await self.sql_db_service.create_event(Event.error(
+                user_id=session.user_id,
+                payload={
+                    "error": err,
+                },
+            ))
+
             session.data.check_port_fuel_price = None
             session, err = await self.sql_db_service.update_session(session.user_id, RouteTaskEnum.GET_PORT_PRICE.value, None, session.route_id, session.data)
             return await self.template_service.get_port_fuel_price_template(session, "❌ Could not find the port")
@@ -256,6 +274,13 @@ class SeaportHandler:
             port_alternatives=ports,
             prices=[price.model_dump() for price in all_prices]
         )
+
+        await self.sql_db_service.create_event(Event.port_price_requested(
+            user_id=session.user_id,
+            payload={
+                "locode": port.locode,
+            },
+        ))
 
         session.data.check_port_fuel_price = check_port_fuel_price
         session, err = await self.sql_db_service.update_session(session.user_id, RouteTaskEnum.GET_PORT_PRICE.value, None, session.route_id, session.data)

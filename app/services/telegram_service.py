@@ -1,6 +1,7 @@
 import asyncio
 import traceback
 import sys
+import uuid
 from typing import List
 import re
 import httpx
@@ -17,6 +18,9 @@ from telegram.ext import (
 )
 
 from app.data import emogye
+from app.data.dto.main import ErrorLog
+from app.data.dto.main.ErrorLog import ErrorLogFactory
+from app.data.dto.main.Event import Event
 from app.domain.message import IncomingMessage
 
 # Create a custom HTTP client with better settings
@@ -26,9 +30,10 @@ http_client = httpx.AsyncClient(timeout=timeout)
 from app.data.dto.messenger.ResponsePayload import ResponsePayloadCollection, ResponsePayload
 from app.services.core_service import CoreService
 from app.services.ai_service import AiService
+from app.services.db_service import DbService
 
 class TelegramService:
-    def __init__(self, core_service: CoreService, ai_service: AiService, token: str):
+    def __init__(self, core_service: CoreService, ai_service: AiService, token: str, sql_db: DbService):
         self.core_service = core_service
         self.ai_service = ai_service
         self.application = None
@@ -48,6 +53,7 @@ class TelegramService:
         self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
         self.application.add_handler(CallbackQueryHandler(self.handle_button))
         self.application.add_handler(MessageHandler(filters.VOICE, self.handle_voice))
+        self.sql_db = sql_db
 
     def get_bot(self):
         return self.application
@@ -121,9 +127,39 @@ class TelegramService:
 
         await self.handle_message(update=update, context=context, override_text=text)
 
-    async def handle_message(self, update, context, override_text : str = None):
+    async def send_progress_updates(self, chat_id: str):
+        try:
+            await asyncio.sleep(10)
+            await self.application.bot.send_message(chat_id, "👀 Give me a second, I’m on it")
+
+            await asyncio.sleep(10)
+            await self.application.bot.send_message(chat_id, "Still working on it — checking details")
+
+            await asyncio.sleep(20)
+            await self.application.bot.send_message(chat_id, "Almost there. This may take a bit longer")
+
+        except asyncio.CancelledError:
+            # Задача будет отменена, когда основной ответ готов
+            pass
+
+    # async def handle_message(self, update, context, override_text : str = None):
+    #     msg = self.from_update(update, override_text)
+    #     responses = await self.core_service.handle(msg)
+    #     await self.send(responses, update)
+
+    async def handle_message(self, update, context, override_text: str = None):
         msg = self.from_update(update, override_text)
-        responses = await self.core_service.handle(msg)
+
+        chat_id = str(update.effective_chat.id)
+
+        progress_task = asyncio.create_task(self.send_progress_updates(chat_id))
+
+        try:
+            responses = await self.core_service.handle(msg)
+        finally:
+
+            progress_task.cancel()
+
         await self.send(responses, update)
 
     async def send(self, responses: ResponsePayloadCollection, update: Update):
@@ -157,7 +193,7 @@ class TelegramService:
 
                     if response_payload.keyboard:
                         await message.reply_text(
-                            "Navigation Commands:",
+                            "Navigation Commands:                       ",
                             reply_markup=response_payload.keyboard,
                             parse_mode="HTML"
                         )
@@ -168,7 +204,7 @@ class TelegramService:
                 if response_payload.has_files():
                     for i, file_obj in enumerate(response_payload.files):
                         file_stream = BytesIO(file_obj.content)
-                        file_stream.name = f"{file_obj.name}.pdf"
+                        file_stream.name = f"{file_obj.filename}.pdf"
 
                         await message.reply_document(
                             document=InputFile(file_stream),
@@ -189,16 +225,10 @@ class TelegramService:
 
                 await message.reply_text("No response generated")
 
-        except Exception as e:
-            exc_type, exc_value, exc_tb = sys.exc_info()
-            tb = traceback.extract_tb(exc_tb)[-1]
-            filename = tb.filename
-            line_no = tb.lineno
-
-            await message.reply_text(
-                f"❌ Error in  <b> {filename} </b>  at line  <b> {line_no} </b> : {e}",
-                parse_mode="HTML"
-            )
+        except Exception as ex:
+            error = ErrorLogFactory.from_exception(ex=ex, position="telegram_handler")
+            await self.sql_db.log_error(error)
+            await message.reply_text("The error just happened. Admins are already noticed, dont worry.", parse_mode="HTML")
 
     async def run(self):
         """Run polling in async mode (for PyCharm debugger)"""

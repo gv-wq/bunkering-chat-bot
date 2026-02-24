@@ -21,7 +21,6 @@ class SearouteWaypoint(BaseModel):
         geometry = d.get("geometry", {})
         coordinates = geometry.get("coordinates", [])
 
-
         return cls(
             eta_datetime=datetime.fromtimestamp(props["timestamp"] / 1000),
             value=props.get("value"),
@@ -31,3 +30,25 @@ class SearouteWaypoint(BaseModel):
             latitude=coordinates[1],
             longitude=coordinates[0],
         )
+
+    def to_dict(self) -> dict:
+        return {
+            "properties": {
+                "timestamp": (
+                    int(self.eta_datetime.timestamp() * 1000)
+                    if self.eta_datetime
+                    else None
+                ),
+                "value": self.value,
+                "distance": self.distance,
+                "type": self.type,
+                "class_name": self.class_name,
+            },
+            "geometry": {
+                "coordinates": (
+                    [self.longitude, self.latitude]
+                    if self.longitude is not None and self.latitude is not None
+                    else []
+                )
+            },
+        }

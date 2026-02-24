@@ -44,3 +44,15 @@ class SearoutePath(BaseModel):
             waypoints=waypoints,
             seaRouteCoordinates=_seaRouteCoordinates,
         )
+
+    def to_dict(self):
+        return {
+            "distance": self.distance,
+            "departure": self.departure,
+            "arrival": self.arrival,
+            "duration": self.duration,
+            "routeAreas": [c.model_dump() for c in self.routeAreas],
+            "waypoints": [c.to_dict() for c in self.waypoints],
+            "seaRouteCoordinates": [c.model_dump() for c in self.seaRouteCoordinates]
+
+        }

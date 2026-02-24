@@ -245,7 +245,7 @@ class AiService:
 
         return intent, None
 
-    def _get_navigation_intent_simple(self, message_lower: str) -> dict:
+    def _get_navigation_intent_simple(self, message_lower: str) -> Optional[dict]:
 
 
         # Expanded command lists with common variations
@@ -344,6 +344,16 @@ class AiService:
                     "cancel": True,
                     "target_step": None,
                 }
+
+        if "sos" in message_lower:
+            return {
+                "prev_step": False,
+                "next_step": False,
+                "main_menu": False,
+                "cancel": False,
+                "is_sos": True,
+                "target_step": None,
+            }
 
         return None
 
