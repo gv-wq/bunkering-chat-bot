@@ -9,10 +9,13 @@ from app.data.dto.main.SeaPort import SeaPortDB
 from app.data.dto.main.Session import SessionDB
 from app.data.dto.main.SessionData import CheckFuelPrice
 from app.data.dto.messenger.ResponsePayload import ResponsePayloadCollection
+from app.data.enums.QuoteRequestEnum import QuoteRequestEnum
 from app.data.enums.RouteTask import RouteTaskEnum
+from app.data.enums.SupplierRequestSearchEnum import SupplierRequestSearchEnum
 from app.handlers.navigation_handler import NavigationHandler
 from app.services.ai_service import AiService
 from app.services.db_service import DbService
+from app.services.fuel_price_service import FuelPriceService
 from app.services.template.telegram_template_service import TemplateService
 from app.services.external_api.searoute_api import SearouteApi
 
@@ -26,12 +29,14 @@ class SeaportHandler:
         template_service : TemplateService,
         navigation_handler: NavigationHandler,
         searoute_api: SearouteApi,
+        port_fuel_price_service: FuelPriceService,
     ):
         self.ai_service = ai_service
         self.sql_db_service = sql_db_service
         self.template_service = template_service
         self.navigation_handler = navigation_handler
         self.searoute_api = searoute_api
+        self.port_fuel_price_service = port_fuel_price_service
 
     def _resolve_port_by_index(self, suggestions: List[SeaPortDB], index: int) -> Optional[SeaPortDB]:
         if not suggestions or index is None:
@@ -43,35 +48,33 @@ class SeaportHandler:
 
     async def _find_fuel_price(
             self,
-            port: SeaPortDB,
+            port,
             fuel_name: str,
             date: datetime.date,
     ) -> Optional[MabuxPortFuelPriceDB]:
-        """
-        Tries to find fuel price by:
-        1) port locode
-        2) alternative mabux ids
-        Stops immediately when a price is found.
-        """
-        price_db, err = await self.sql_db_service.get_port_fuel_price_by_port_locode(
+        date = utils.adjust_from_weekend(date)
+
+        price_db, _ = await self.sql_db_service.get_port_fuel_price_by_port_locode(
             port.locode, fuel_name, date
         )
         if price_db:
-            return price_db
+            if price_db.value > 0:
+                return price_db
 
         alt_ids, err = await self.sql_db_service.get_alternative_mabux_ids(port.locode.strip())
         if err or not alt_ids:
             return None
 
         for mabux_id in alt_ids:
-            price_db, err = await self.sql_db_service.get_port_fuel_price_by_port_mabux_id(
+            price_db, _ = await self.sql_db_service.get_port_fuel_price_by_port_mabux_id(
                 mabux_id, fuel_name, date
             )
             if price_db:
-                return price_db
+                if price_db.value > 0:
+                    return price_db
 
         return None
-
+    
     def _date_range(
             self,
             dt_from: datetime.date,
@@ -138,44 +141,7 @@ class SeaportHandler:
             return None, str(e)
 
 
-    async def get_port_fuel_cost_timeseries2(
-            self,
-            port: SeaPortDB,
-            fuel_name: str,
-            dt_from: Optional[datetime.date] = None,
-            dt_to: Optional[datetime.date] = None,
-    ) -> tuple[list[MabuxPortFuelPriceDB] | None, str | None]:
-
-        try:
-            today = datetime.now().date()
-
-            dt_to = dt_to or today
-            dt_from = dt_from or (dt_to - timedelta(days=30))
-
-            if dt_from > dt_to:
-                return None, f"Bad bounds, {dt_from} > {dt_to}"
-
-            prices: list[MabuxPortFuelPriceDB] = []
-
-            for day in self._date_range(dt_from, dt_to):
-                price = await self._find_fuel_price(
-                    port=port,
-                    fuel_name=fuel_name,
-                    date=day,
-                )
-                if price:
-                    prices.append(price)
-
-            if not prices:
-                return None, None
-
-            return prices, None
-
-        except Exception as e:
-            return None, str(e)
-
     async def handle(self, session: SessionDB, message: str) -> ResponsePayloadCollection:
-
         intent = await self.ai_service.parse_port_fuel_price_intend_2(session, message)
         # if err:
         #     return await self.template_service.get_port_fuel_price_template(session, "❌ Could not understand your request")
@@ -189,16 +155,22 @@ class SeaportHandler:
         #
         # if intent.get("port_name", None) is None:
         #     intent['port_name'] = message.lower().strip()
+        #
+        #     return await self.template_service.get_port_fuel_price_template(session, "Could not fetch port name")
 
-            #return await self.template_service.get_port_fuel_price_template(session, "Could not fetch port name")
+        if intent.get("navigation", "") == "supplier_quote_request":
+            session.current_task = RouteTaskEnum.SUPPLIER_REQUEST_CREATE.value
+            session.current_step = QuoteRequestEnum.VESSEL_NAME.value
+            session.route_id = None
+            session, err = await self.sql_db_service.update_session(session.user_id, session.current_task, session.current_step, session.route_id, session.data)
+            return await self.template_service.session_template(session, err_msg=str(err) if err else None)
+
 
         port, ports, err = self.sql_db_service.search_port_with_suggestions(intent.get('locode', message))
-
 
         await self.sql_db_service.create_event(Event.port_searched(
             user_id=session.user_id,
             payload={
-                "locode": port.locode,
                 "query": intent.get('locode', message),
             },
         ))
@@ -267,7 +239,6 @@ class SeaportHandler:
             all_prices.extend(price) for price, err in results
             if price is not None
         ]
-
 
         check_port_fuel_price = CheckFuelPrice(
             port=port,

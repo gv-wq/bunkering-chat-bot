@@ -222,12 +222,44 @@ class AdminUpdateTariff(BaseModel):
         )
 
 
+class QuoteSearch(BaseModel):
+    offset: int = Field(0)
+    limit: int = Field(10)
+    id: Optional[str] = Field()
+    ids: List[str] = Field(default_factory=list)
+    total: int = Field(0)
+
+    @classmethod
+    def from_dict(cls, d: dict):
+        return cls(
+            offset=d.get("offset", 0),
+            limit=d.get("limit", 10),
+            ids=d.get("ids", []),
+            total=d.get("total", 0),
+            id=d.get("id", None),
+        )
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), default=str, ensure_ascii=False)
+
+    @classmethod
+    def default(cls):
+        return cls(
+            offset=0,
+            limit=10,
+            ids=[],
+            total=0,
+            id=None,
+        )
+
 class SessionData(BaseModel):
     check_port_fuel_price: Optional[CheckFuelPrice] = Field(None)
     route_search: RouteSearch = Field()
     tariff_selection: TariffSelection = Field()
     user_search: UserSearch = Field()
     admin_update_tariff : AdminUpdateTariff = Field()
+    quote_search: QuoteSearch = Field()
+
 
     @classmethod
     def from_dict(cls, d: dict) -> "SessionData":
@@ -241,6 +273,7 @@ class SessionData(BaseModel):
             tariff_selection=TariffSelection.from_dict(tariff_selection_dict),
             user_search=UserSearch.from_dict(d.get("user_search", {})),
             admin_update_tariff=AdminUpdateTariff.from_dict(d.get("admin_update_tariff", {})),
+            quote_search=QuoteSearch.from_dict(d.get("quote_search", {})),
         )
 
     def to_dict(self) -> dict:
@@ -250,4 +283,5 @@ class SessionData(BaseModel):
             "tariff_selection" : self.tariff_selection.model_dump(),
             "user_search": self.user_search.to_dict(),
             "admin_update_tariff": self.admin_update_tariff.model_dump(),
+            "quote_search": self.quote_search.model_dump()
         }

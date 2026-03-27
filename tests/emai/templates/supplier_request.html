@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Bunker Fuel RFQ</title>
+
+<style>
+    body {
+        font-family:     Arial, sans-serif;
+        margin: 0;
+        padding: 0;
+        color: #1a202c;
+        display: flex;
+        justify-content: center;   /* horizontal center */
+
+     }
+
+    .container {
+
+        padding: 5px;
+        max-width: 1000px;
+        margin: 0;
+
+    }
+    .header { text-align: center; margin-bottom: 5px; }
+    .header-sub { font-size: 14px; color: #718096; }
+    .summary { display: flex; justify-content: space-around; flex-wrap: wrap; margin-top: 15px; }
+    .summary-box { margin: 10px; text-align: center; }
+    .summary-label { font-weight: bold; color: #4a5568; }
+    .summary-value { font-size: 18px; font-weight: 600; color: #2d3748; }
+    .two-columns { display: flex; gap: 20px; margin-top: 20px; flex-wrap: wrap; max-width: 900px }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
+    th, td { border: 1px solid #cbd5e0; padding: 4px; text-align: left; font-weight: 500 }
+    th { background-color: #edf2f7; font-weight: 500 bold;  }
+    .section h4 { margin-top: 10px; }
+    .fuel-summary { margin-top: 20px; }
+    .remark { margin-top: 20px; background: #f7fafc; padding: 10px; border-left: 4px solid #2f855a; }
+    .footer { text-align: center; font-size: 12px; color: #718096; margin-top: 30px; }
+    .port-info-container { display: flex; gap: 5px; margin-top: 10px; }
+    .port-map-image-container img { max-width: 300px; border: 1px solid #cbd5e0; }
+    .port-prices-image-container img { max-width: 800px; border: 1px solid #cbd5e0; }
+    .port-info { flex: 1; }
+    .port-card { padding: 0px; border: 1px solid #cbd5e0; margin-top: 0px; }
+    .port-title { font-weight: bold; font-size: 16px; }
+    .agent {max-width: 400px}
+</style>
+</head>
+
+<body>
+
+    <div class="container">
+        <div class="header">
+            <h3>⚓ Bunker Fuel Quote Request</h3>
+
+            <div class="header-sub">
+                Official RFQ Document | Generated {{ generation_date }}
+            </div>
+
+            <div class="summary">
+
+                <div class="summary-box">
+                    <div class="summary-label">Request ID</div>
+                    <div class="summary-value">{{ request_id }}</div>
+                </div>
+
+                <div class="summary-box">
+                    <div class="summary-label">Vessel name</div>
+                    <div class="summary-value">{{ vessel_name }}</div>
+                </div>
+
+                <div class="summary-box">
+                    <div class="summary-label">Vessel IMO</div>
+                    <div class="summary-value">{{ vessel_imo }}</div>
+                </div>
+
+                <div class="summary-box">
+                    <div class="summary-label">Total Fuel Cost</div>
+                    <div class="summary-value">
+                    ${{ "{:,.0f}".format(total_cost) }}
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+    <div class="two-columns">
+
+    <table>
+        <thead>
+            <tr>
+                <th colspan="2">Quote Information</th>
+            </tr>
+        </thead>
+
+        <tr>
+            <td><strong>Vessel name</strong></td>
+            <td>{{ vessel_name }}</td>
+        </tr>
+
+        <tr>
+            <td><strong>Vessel IMO</strong></td>
+            <td>{{ vessel_imo }}</td>
+        </tr>
+
+        <tr>
+            <td><strong>ETA FROM:</strong></td>
+            <td>{{ eta_from }}</td>
+        </tr>
+
+        <tr>
+            <td><strong>ETA TO:</strong></td>
+            <td>{{ eta_to }}</td>
+        </tr>
+
+
+    <tr>
+        <td><strong>Request ID</strong></td>
+        <td>{{ request_id }}</td>
+    </tr>
+
+    </table>
+
+    <table>
+        <thead>
+            <tr>
+             <th colspan="2">Customer Information</th>
+            </tr>
+        </thead>
+
+        {% if user.company_name %}
+        <tr>
+            <td><strong>Company</strong></td>
+            <td>{{ user.company_name }}</td>
+        </tr>
+        {% endif %}
+
+        {% if user.first_name or user.last_name %}
+        <tr>
+            <td> <strong>Contact</strong></td>
+            <td>{{ user.first_name if user.first_name else "" }} {{ user.last_name if user.last_name else "" }}</td>
+        </tr>
+        {% endif %}
+
+        {% if user.email %}
+        <tr>
+            <td><strong>Email</strong></td>
+            <td>{{ user.email }}</td>
+        </tr>
+        {% endif %}
+
+        {% if user.telegram_user_name %}
+        <tr>
+            <td><strong>Telegram user name</strong></td>
+            <td>{{ user.telegram_user_name }}</td>
+        </tr>
+        {% endif %}
+
+        {% if user.phone_number %}
+        <tr>
+            <td><strong>Phone</strong></td>
+            <td>{{ user.phone_number }}</td>
+        </tr>
+        {% endif %}
+
+    </table>
+
+    </div>
+
+    <!-- PORT -->
+
+    {% if port %}
+
+        <div class="port-info-container">
+            {% if image %}
+                <div class="port-map-image-container">
+                    <img src="data:image/png;base64,{{ image }}">
+                </div>
+            {% endif %}
+
+
+
+            <div class="port-info">
+                <h4>📍 Port Information</h4>
+                <div class="port-card">
+                <div class="port-title"> ⚓ {{ port.port_name }} </div>
+                {% if port.country_name %}
+                    <div class="port-location"> <strong>Country:</strong> {{ port.country_name }} </div>
+                {% endif %}
+                    {% if port.locode %}
+                    <div class="port-locode"> <strong>Locode:</strong> {{ port.locode }} </div>
+                {% endif %}
+                {% if port.port_size %}
+                    <div class="port-size"> <strong>Size:</strong> {{ port.port_size }} </div>
+                {% endif %}
+                        {% if port.is_barge or port.is_truck %}
+                    <div class="port-barge-status"> <strong>Delivery method :</strong> {{ "🛢" if port.is_barge else ""  "🚚" if port.is_truck else "" }} </div>
+                {% endif %}
+
+                        {% if port.latitude %}
+                    <div class="port-latitude"> <strong>Latitude:</strong> {{ port.latitude }} </div>
+                {% endif %}
+                {% if port.longitude %}
+                    <div class="port-longitude"> <strong>Logitude:</strong> {{ port.longitude }} </div>
+                {% endif %}
+
+
+                {% if port.agent_contact_list %}
+                    <div class="agent">
+                        <strong>Agent:</strong> {{ port.agent_contact_list }}
+                    </div>
+                {% endif %}
+                </div>
+            </div>
+        </div>
+
+    {% endif %}
+
+
+    <!-- FUEL TABLE -->
+
+    <div class="section">
+    <h4>⛽ Fuel Requirements</h4>
+
+
+     {% if prices_image_bytes %}
+        <div class="port-prices-image-container">
+            <img src="data:image/png;base64,{{ prices_image_bytes }}">
+        </div>
+    {% endif %}
+
+
+
+    <table>
+        <thead>
+            <tr>
+            <th>Fuel Type</th>
+            <th>Quantity (mt)</th>
+            <th>Indicative price</th>
+            <th>Total indicative price</th>
+            </tr>
+        </thead>
+    <tbody>
+    {% for fuel in fuels %}
+        <tr>
+            <td>{{ fuel.fuel_name }}</td>
+            <td>{{ fuel.quantity }} mt</td>
+            <td>
+            {% if fuel.price > 0 %}
+                ${{ "{:,.2f}".format(fuel.price) }}
+                {% else %}
+                <span style="color:#a0aec0">Price on request</span>
+                {% endif %}
+            </td>
+            <td>
+                {% if fuel.cost > 0 %}
+                <strong>${{ "{:,.0f}".format(fuel.cost) }}</strong>
+                {% else %}
+                —
+                {% endif %}
+            </td>
+        </tr>
+    {% endfor %}
+
+    </tbody>
+    </table>
+
+    </div>
+
+    <!-- COST SUMMARY -->
+
+    <div class="fuel-summary">
+        <div style="font-size:18px;font-weight:600;margin-bottom:6px;"> Total indicative price  </div>
+        <div style="font-size:22px;color:#2f855a;font-weight:700;"> ${{ "{:,.0f}".format(total_cost) }}   </div>
+    </div>
+
+    <!-- REMARK -->
+
+    {% if remark %}
+        <div class="remark">
+            <strong>Additional Remarks:</strong>
+           {{ remark }}
+        </div>
+    {% endif %}
+
+    <!-- FOOTER -->
+
+    <div class="footer">
+        <a href="https://www.thebunkering.com/">thebunkering.com</a>
+        <p>All rights reserved.</p>
+        <p>Please respond with your best commercial offer.</p>
+        <p>© {{ generation_date.split(" ")[-1] }} Bunkering Operations</p>
+
+    </div>
+
+    </div>
+
+    </body>
+</html>

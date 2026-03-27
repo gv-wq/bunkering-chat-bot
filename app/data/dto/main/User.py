@@ -33,6 +33,7 @@ class User(BaseModel):
     filled_name: Optional[str] = Field(None)
     is_admin: bool = Field(default=False, description="User admin status")
     role: Optional[str] = Field(None, description="User role")
+    promocode: Optional[str] = Field(None, description="User's promocode")
 
 class UserDB(User):
     id: UUID
@@ -78,4 +79,5 @@ class UserDB(User):
             filled_name=row["filled_name"],
             is_admin=row["is_admin"] if row["is_admin"] else False,
             role=row["role"],
+            promocode=row['promocode'] if row['promocode'] else None,
         )

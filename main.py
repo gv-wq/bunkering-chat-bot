@@ -1,9 +1,7 @@
 import os
-import sys
 import asyncio
 import logging
 
-from app.handlers import admin_handler
 from app.handlers.admin_handler import AdminHandler
 from config.settings import ENV, require
 
@@ -11,12 +9,12 @@ from app.handlers.navigation_handler import NavigationHandler
 from app.services.ai_service import AiService
 from app.services.core_service import CoreService
 from app.services.db_service import DbService
-from app.services.external_api.bubble_api import BubbleApi
 from app.services.external_api.searoute_api import SearouteApi
 from app.services.internal_api.map_builder_api import MapBuilderApi
 from app.services.telegram_service import TelegramService
 from app.services.template.telegram_template_service import TemplateService
 from app.services.whatsapp_service import WhatsApp360DialogService
+from app.services.fuel_price_service import FuelPriceService
 
 from app.services.utils.island_projection import IslandProjection
 from app.services.utils.near_country_search import RouteCountryFinder
@@ -73,6 +71,8 @@ async def main():
     #     require("BUBBLE_TOKEN"),
     # )
 
+
+
     map_builder_api = MapBuilderApi(
         base_url=require("MAP_BUILDER_BASE_URL"),
         public_url=require("MAP_BUILDER_PUBLIC_URL")
@@ -115,7 +115,7 @@ async def main():
         map_builder_api,
         admin_handler,
         projector,
-        country_finder
+        country_finder,
     )
 
     telegram_service = TelegramService(
@@ -135,10 +135,14 @@ async def main():
     )
 
     await asyncio.gather(
-        run_telegram(telegram_service),
-        run_whatsapp(whatsapp_service)
+       run_telegram(telegram_service),
+       run_whatsapp(whatsapp_service)
     )
 
+
+# os.environ["ALL_PROXY"] = "socks5h://127.0.0.1:1082"
+# os.environ["HTTP_PROXY"] = "socks5h://127.0.0.1:1082"
+# os.environ["HTTPS_PROXY"] = "socks5h://127.0.0.1:1082"
 
 if __name__ == "__main__":
     asyncio.run(main())

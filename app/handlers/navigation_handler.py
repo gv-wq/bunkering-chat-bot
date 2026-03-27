@@ -1,14 +1,20 @@
 import uuid
 from typing import Dict, Optional, Tuple, List
 
-from app.data import emogye
+from PIL.QoiImagePlugin import QoiDecoder
+
+from app.data import emoji
 from app.data.dto.main.Session import SessionDB
-from app.data.dto.main.SessionData import SessionData, RouteSearch, UserSearch, AdminUpdateTariff
+from app.data.dto.main.SessionData import SessionData, RouteSearch, UserSearch, AdminUpdateTariff, QuoteSearch
 from app.data.dto.main.TariffSelection import TariffSelection
+from app.data.enums.QuoteRequestEnum import QuoteRequestEnum
 from app.data.enums.RouteStep import RouteStepEnum
 from app.data.enums.RouteTask import RouteTaskEnum
 from app.data.enums.AdminStepEnum import AdminStepEnum
+from app.data.enums.StartStepEnum import StartStepEnum
+from app.data.enums.SupplierRequestSearchEnum import SupplierRequestSearchEnum
 from app.data.enums.search_route_enum import SearchRouteStepEnum
+
 from app.services.db_service import DbService
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -38,7 +44,7 @@ class NavigationHandler:
                 RouteStepEnum.VESSEL_NAME.value,
                 RouteStepEnum.VESSEL_IMO.value,
                 RouteStepEnum.USER_EMAIL.value,
-                RouteStepEnum.SUPPLIER_PRICES.value,
+                #RouteStepEnum.SUPPLIER_PRICES.value,
                 RouteStepEnum.COMPANY_NAME.value
 
 
@@ -53,6 +59,34 @@ class NavigationHandler:
             RouteTaskEnum.ADMIN.value: [
                 AdminStepEnum.GENERAL.value,
                 AdminStepEnum.UPDATE_TARIFF.value
+            ],
+            RouteTaskEnum.ROUTE_RESEARCH.value: [
+                RouteTaskEnum.CREATE_ROUTE.value,
+                RouteTaskEnum.SEARCH_ROUTE.value
+            ],
+            RouteTaskEnum.SUPPLIER_REQUEST_CREATE.value : [
+                QuoteRequestEnum.VESSEL_NAME.value,
+                QuoteRequestEnum.VESSEL_IMO.value,
+                QuoteRequestEnum.PORT_SEARCH.value,
+                QuoteRequestEnum.ETA.value,
+                QuoteRequestEnum.FUEL_QUANTITY.value,
+                QuoteRequestEnum.COMPANY_NAME.value,
+                QuoteRequestEnum.REMARK.value,
+                QuoteRequestEnum.EMAIL.value,
+                QuoteRequestEnum.ANOTHER_QUOTE_REQUEST.value,
+            ],
+            RouteTaskEnum.SUPPLIER_REQUEST_LIST.value: [
+                SupplierRequestSearchEnum.LIST.value,
+                SupplierRequestSearchEnum.VIEW.value,
+            ],
+            RouteTaskEnum.START.value: [
+                StartStepEnum.ROLE.value,
+                StartStepEnum.USER_NAME.value,
+                StartStepEnum.COMPANY_NAME.value,
+                StartStepEnum.PHONE_NUMBER.value,
+                StartStepEnum.EMAIL.value,
+                StartStepEnum.PROMOCODE.value,
+                StartStepEnum.DONE.value
             ]
         }
 
@@ -105,35 +139,64 @@ class NavigationHandler:
     def get_step_title(self, step_value: str, update_status: bool = False) -> str:
         """Get the display title for a step"""
 
-        new_route = "" #f"{emogye.ANCHOR} New route - "
+        new_route = "" #f"{emoji.ANCHOR} New route - "
         titles = {
-            RouteStepEnum.DEPARTURE_PORT_SUGGESTION.value: f"{new_route}{emogye.ARROW_UP} Departure port search",
-         #   RouteStepEnum.DEPARTURE_PORT_NEARBY.value: f"{emogye.PIN} Departure port nearby",
-            RouteStepEnum.DESTINATION_PORT_SUGGESTION.value: f"{new_route}{emogye.ARROW_DOWN} Destination port search",
-          #  RouteStepEnum.DESTINATION_PORT_NEARBY.value: f"{emogye.PIN} Destination port nearby",
-            RouteStepEnum.DEPARTURE_DATE.value: f"{new_route}{emogye.CALENDAR} Departure date",
-            RouteStepEnum.AVERAGE_SPEED.value: f"{new_route}{emogye.SPEED} Average speed",
-            RouteStepEnum.FUEL_SELECTION.value: f"{new_route}{emogye.OIL_DUM} Fuel selection",
-            RouteStepEnum.ROUTE_PORT_LIST.value: f"{new_route}{emogye.BOX_WITH_CHECK} Ports selection",
-            RouteStepEnum.BUNKERING_QUEUE.value: f"{new_route}{emogye.HANDSHAKE} Bunkering requests",
-            RouteStepEnum.PDF_REQUEST.value: f"{new_route}{emogye.PDF} PDF request",
-            RouteStepEnum.VESSEL_NAME.value: f"{new_route}{emogye.SHIP} Vessel name",
-            RouteStepEnum.VESSEL_IMO.value: f"{new_route}{emogye.SHIP} Vessel imo",
-            RouteStepEnum.SUPPLIER_PRICES.value : f"{new_route}{emogye.STATS_LINE} Supplier prices",
-            RouteStepEnum.COMPANY_NAME.value : f"{new_route}{emogye.COMPANY} Company name",
-            RouteStepEnum.USER_EMAIL.value: f"{new_route}{emogye.POSTMAIL} User email",
+            RouteStepEnum.DEPARTURE_PORT_SUGGESTION.value: f"{new_route}{emoji.ARROW_UP} Departure port search",
+         #   RouteStepEnum.DEPARTURE_PORT_NEARBY.value: f"{emoji.PIN} Departure port nearby",
+            RouteStepEnum.DESTINATION_PORT_SUGGESTION.value: f"{new_route}{emoji.ARROW_DOWN} Destination port search",
+          #  RouteStepEnum.DESTINATION_PORT_NEARBY.value: f"{emoji.PIN} Destination port nearby",
+            RouteStepEnum.DEPARTURE_DATE.value: f"{new_route}{emoji.CALENDAR} Departure date",
+            RouteStepEnum.AVERAGE_SPEED.value: f"{new_route}{emoji.SPEED} Average speed",
+            RouteStepEnum.FUEL_SELECTION.value: f"{new_route}{emoji.OIL_DUM} Fuel selection",
+            RouteStepEnum.ROUTE_PORT_LIST.value: f"{new_route}{emoji.BOX_WITH_CHECK} Ports selection",
+            RouteStepEnum.BUNKERING_QUEUE.value: f"{new_route}{emoji.HANDSHAKE} Bunkering requests",
+            RouteStepEnum.PDF_REQUEST.value: f"{new_route}{emoji.PDF} Bunkering request",
+            RouteStepEnum.VESSEL_NAME.value: f"{new_route}{emoji.SHIP} Vessel name",
+            RouteStepEnum.VESSEL_IMO.value: f"{new_route}{emoji.SHIP} Vessel imo",
+            RouteStepEnum.SUPPLIER_PRICES.value : f"{new_route}{emoji.STATS_LINE} Supplier prices",
+            RouteStepEnum.COMPANY_NAME.value : f"{new_route}{emoji.COMPANY} Company name",
+            RouteStepEnum.USER_EMAIL.value: f"{new_route}{emoji.POSTMAIL} User email",
+            RouteStepEnum.MAIN_MENU.value : "Main Menu",
 
-            RouteStepEnum.MAIN_MENU.value : "Main Menu"
+
+            # Quote supplier request
+            QuoteRequestEnum.VESSEL_NAME.value: f"{emoji.SHIP} Vessel name",
+            QuoteRequestEnum.VESSEL_IMO.value: f"{emoji.SHIP} Vessel imo",
+            QuoteRequestEnum.PORT_SEARCH.value: f"{emoji.ANCHOR} Port search",
+            QuoteRequestEnum.ETA.value: f"{emoji.CALENDAR} ETA",
+            #QuoteRequestEnum.ETA_TO.value: f"{emoji.CALENDAR} ETA TO",
+            QuoteRequestEnum.FUEL_QUANTITY.value: f"{emoji.OIL_DUM} Fuel quantity",
+            QuoteRequestEnum.REMARK.value: f"{emoji.NOTE} Notes",
+            QuoteRequestEnum.COMPANY_NAME.value: f"{emoji.COMPANY} Company name",
+            QuoteRequestEnum.EMAIL.value: f"{emoji.POSTMAIL} User email",
+            QuoteRequestEnum.ANOTHER_QUOTE_REQUEST.value: f"{emoji.QUESTION} Another quote request?",
+
         }
 
         update_titles = {
-            RouteStepEnum.DEPARTURE_PORT_SUGGESTION.value: f"{emogye.REPEAT} Step 1 of 4 - UPDATE DEPARTURE PORT",
-            RouteStepEnum.DESTINATION_PORT_SUGGESTION.value: f"{emogye.REPEAT} Step 2 of 4 - UPDATE DESTINATION PORT",
-            RouteStepEnum.DEPARTURE_DATE.value: f"{emogye.REPEAT} Step 3 of 4 - UPDATE DEPARTURE DATE",
-            RouteStepEnum.AVERAGE_SPEED.value: f"{emogye.REPEAT} Step 4 of 4 - UPDATE AVERAGE SPEED",
+            RouteStepEnum.DEPARTURE_PORT_SUGGESTION.value: f"{emoji.REPEAT} Step 1 of 4 - UPDATE DEPARTURE PORT",
+            RouteStepEnum.DESTINATION_PORT_SUGGESTION.value: f"{emoji.REPEAT} Step 2 of 4 - UPDATE DESTINATION PORT",
+            RouteStepEnum.DEPARTURE_DATE.value: f"{emoji.REPEAT} Step 3 of 4 - UPDATE DEPARTURE DATE",
+            RouteStepEnum.AVERAGE_SPEED.value: f"{emoji.REPEAT} Step 4 of 4 - UPDATE AVERAGE SPEED",
         }
 
         return titles.get(step_value, step_value) if not update_status else update_titles.get(step_value, titles.get(step_value, step_value))
+
+    def get_quote_request_step_title(self, step_value: str) -> str:
+        titles = {
+            QuoteRequestEnum.VESSEL_NAME.value :  f"{emoji.SHIP} Vessel name",
+            QuoteRequestEnum.VESSEL_IMO.value :  f"{emoji.SHIP} Vessel imo",
+            QuoteRequestEnum.PORT_SEARCH.value:  f"{emoji.ANCHOR} Port search",
+            QuoteRequestEnum.ETA.value: f"{emoji.CALENDAR} ETA",
+            #QuoteRequestEnum.ETA_TO.value: f"{emoji.CALENDAR} ETA TO",
+           # QuoteRequestEnum.FUEL_NAMES.value: f"{emoji.OIL_DUM} Fuel selection",
+            QuoteRequestEnum.FUEL_QUANTITY.value: f"{emoji.OIL_DUM} Fuel quantity",
+            QuoteRequestEnum.REMARK.value: f"{emoji.NOTE} Notes",
+            QuoteRequestEnum.COMPANY_NAME.value: f"{emoji.COMPANY} Company name",
+            QuoteRequestEnum.EMAIL.value: f"{emoji.POSTMAIL} User email",
+            QuoteRequestEnum.ANOTHER_QUOTE_REQUEST.value: f"{emoji.QUESTION} Another quote request?",
+        }
+        return "Supplier request: " + titles.get(step_value, step_value)
 
     def get_navigation_text(self, session: SessionDB) -> str:
         """Generate navigation help text based on current task and step"""
@@ -148,7 +211,7 @@ class NavigationHandler:
         current_index = self._get_step_index(flow, current_step)
 
         navigation_lines = [
-            "\n\nNavigational Commands:",
+            "\n\n<b>Navigational Commands:</b>",
         ]
 
         # Add NEXT command with specific step name
@@ -190,13 +253,38 @@ class NavigationHandler:
         navigation_lines.append("Sos! - call the admin")
         return "\n".join(navigation_lines)
 
-    def get_navigation_keyboard(self, current_step: Optional[str] = None) -> InlineKeyboardMarkup:
+    def get_navigation_keyboard(self, current_step: Optional[str] = None, show_yes: bool = False, show_menu: bool = True) -> InlineKeyboardMarkup:
         buttons = []
 
         # YES
-        buttons.append(
-            InlineKeyboardButton("✅ Yes", callback_data="yes")
-        )
+        if show_yes:
+            buttons.append(
+                InlineKeyboardButton("✅ Yes", callback_data="yes")
+            )
+
+        # BACK
+        if current_step and  current_step != RouteStepEnum.DEPARTURE_PORT_SUGGESTION.value:
+            buttons.append(InlineKeyboardButton("⬅ Back", callback_data="back"))
+
+        # MENU
+        if show_menu:
+            buttons.append(
+                InlineKeyboardButton("🏠 Menu", callback_data="menu")
+            )
+
+        #buttons.append(InlineKeyboardButton(f"{emoji.HEAD} Ask an Expert!", callback_data="SOS")  )
+
+
+        return InlineKeyboardMarkup([buttons])
+
+    def get_navigation_keyboard_promocode(self, current_step: Optional[str] = None, show_yes: bool = False) -> InlineKeyboardMarkup:
+        buttons = []
+
+        # YES
+        if show_yes:
+            buttons.append(
+                InlineKeyboardButton("✅ Yes", callback_data="yes")
+            )
 
         # BACK
         if current_step and  current_step != RouteStepEnum.DEPARTURE_PORT_SUGGESTION.value:
@@ -204,10 +292,10 @@ class NavigationHandler:
 
         # MENU
         buttons.append(
-            InlineKeyboardButton("🏠 Menu", callback_data="menu")
+            InlineKeyboardButton("🏠 Without code", callback_data="without_promocode")
         )
 
-        buttons.append(InlineKeyboardButton(f"{emogye.SOS} Sos!", callback_data="SOS")  )
+        #buttons.append(InlineKeyboardButton(f"{emoji.HEAD} Ask an Expert!", callback_data="SOS")  )
 
         return InlineKeyboardMarkup([buttons])
 
@@ -222,63 +310,88 @@ class NavigationHandler:
             InlineKeyboardButton("🗑️ Remove", callback_data="remove"),
             InlineKeyboardButton("⬅ Back", callback_data="back"),
             InlineKeyboardButton("🏠 Menu", callback_data="menu"),
-            InlineKeyboardButton(f"{emogye.SOS} Sos!", callback_data="SOS")
+            #InlineKeyboardButton(f"{emoji.HEAD} Ask an Expert!", callback_data="SOS")
 
         ]])
 
 
     def get_main_menu_keyboard(self, session: SessionDB) -> InlineKeyboardMarkup:
+        # return InlineKeyboardMarkup([[
+        #     InlineKeyboardButton(f"{emoji.SHIP} New route", callback_data="1"),
+        #     InlineKeyboardButton(f"{emoji.CALENDAR} My routes", callback_data="2"),
+        #     InlineKeyboardButton(f"{emoji.STATS_LINE} Port prices", callback_data="3"),
+        #     InlineKeyboardButton(f"{emoji.HEAD} Ask an Expert!", callback_data="SOS")
+        # ]])
         return InlineKeyboardMarkup([[
-            InlineKeyboardButton(f"{emogye.SHIP} New route", callback_data="1"),
-            InlineKeyboardButton(f"{emogye.CALENDAR} My routes", callback_data="2"),
-            InlineKeyboardButton(f"{emogye.STATS_LINE} Port prices", callback_data="3"),
-            InlineKeyboardButton(f"{emogye.SOS} Sos!", callback_data="SOS")
+            InlineKeyboardButton(f"{emoji.MAP} Route research", callback_data="1"),
+            InlineKeyboardButton(f"{emoji.STATS_LINE} Port prices", callback_data="2"),
+            InlineKeyboardButton(f"{emoji.NOTE} Supplier offer", callback_data="3"),
+            #InlineKeyboardButton(f"{emoji.HEAD} Ask an Expert!", callback_data="SOS")
         ]])
 
     def get_yes_no_keyboard(self, ) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup([[
-            InlineKeyboardButton(f"{emogye.CHECK_GREEN_BACKGROUND} Yes", callback_data="yes"),
-            InlineKeyboardButton(f"{emogye.CROSS_RED} No", callback_data="no"),
-            InlineKeyboardButton(f"{emogye.SOS} Sos!", callback_data="SOS")
+            InlineKeyboardButton(f"{emoji.CHECK_GREEN_BACKGROUND} Yes", callback_data="yes"),
+            InlineKeyboardButton(f"{emoji.CROSS_RED} No", callback_data="no"),
+            #InlineKeyboardButton(f"{emoji.HEAD} Ask an Expert!", callback_data="SOS")
         ]])
 
     def get_yes_no_back_keyboard(self)  -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup([[
-            InlineKeyboardButton(f"{emogye.CHECK_GREEN_BACKGROUND} Yes", callback_data="yes"),
-            InlineKeyboardButton(f"{emogye.CROSS_RED} No", callback_data="no"),
+            InlineKeyboardButton(f"{emoji.CHECK_GREEN_BACKGROUND} Yes", callback_data="yes"),
+            InlineKeyboardButton(f"{emoji.CROSS_RED} No", callback_data="no"),
             InlineKeyboardButton("⬅ Back", callback_data="back"),
-            InlineKeyboardButton(f"{emogye.SOS} Sos!", callback_data="SOS")
+            #InlineKeyboardButton(f"{emoji.HEAD} Ask an Expert!", callback_data="SOS")
         ]])
 
 
     def get_to_main_menu_keyboard(self, session: SessionDB) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup([[
-            InlineKeyboardButton(f"{emogye.HOME} Menu", callback_data="menu"),
-            InlineKeyboardButton(f"{emogye.SOS} Sos!", callback_data="SOS")
+            InlineKeyboardButton(f"{emoji.HOME} Menu", callback_data="menu"),
         ]])
 
-    def get_show_route_navigation_keyboard(self, session: SessionDB) -> InlineKeyboardMarkup:
+    def get_from_port_price_to_main_menu_keyboard(self, session: SessionDB) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup([[
+            InlineKeyboardButton(f"{emoji.HOME} Menu", callback_data="menu"),
+            InlineKeyboardButton(f"{emoji.DOC} Supplier quote", callback_data="get_supplier_quote"),
+        ]])
+
+
+    def get_show_route_navigation_keyboard(self, session: SessionDB = None) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup([[
             InlineKeyboardButton(f"+", callback_data="+"),
             InlineKeyboardButton(f"-", callback_data="-"),
-            InlineKeyboardButton(f"{emogye.HOME} Menu", callback_data="menu"),
-            InlineKeyboardButton(f"{emogye.SOS} Sos!", callback_data="SOS")
+            InlineKeyboardButton(f"{emoji.HOME} Menu", callback_data="menu"),
+            InlineKeyboardButton(f"{emoji.DOC} Supplier quote", callback_data="get_supplier_quote"),
         ]])
 
     def get_role_choice_keyboard(self) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup([
-            [InlineKeyboardButton(f"1. Ship owner {emogye.SHIP}", callback_data="1")],
-            [InlineKeyboardButton(f"2. Ship operator {emogye.OPERATOR}", callback_data="2")],
-            [InlineKeyboardButton(f"3. Fleet / Voyage manager {emogye.COMPASS}", callback_data="3")],
-            [InlineKeyboardButton(f"4. Bunker trader / Supplier {emogye.OIL_DUM}", callback_data="4")],
-            [InlineKeyboardButton(f"5. Charterer {emogye.STATS}", callback_data="5")],
-            [InlineKeyboardButton(f"6. Technical / Other {emogye.MECHANICAL_KEY}", callback_data="6")],
+            [InlineKeyboardButton(f"1. Ship owner {emoji.SHIP}", callback_data="1")],
+            [InlineKeyboardButton(f"2. Ship operator {emoji.OPERATOR}", callback_data="2")],
+            [InlineKeyboardButton(f"3. Fleet / Voyage manager {emoji.COMPASS}", callback_data="3")],
+            [InlineKeyboardButton(f"4. Bunker trader / Supplier {emoji.OIL_DUM}", callback_data="4")],
+            [InlineKeyboardButton(f"5. Charterer {emoji.STATS}", callback_data="5")],
+            [InlineKeyboardButton(f"6. Technical / Other {emoji.MECHANICAL_KEY}", callback_data="6")],
         ])
 
     def get_skip_button(self):
         return InlineKeyboardMarkup([
             [InlineKeyboardButton(f"Skip ", callback_data="-")],
+        ])
 
+    def get_one_two_back(self):
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"1. {emoji.ANCHOR} Create route", callback_data="1")],
+            [InlineKeyboardButton(f"2. {emoji.STATS_LINE} Show my routes ", callback_data="2")],
+            [InlineKeyboardButton(f"{emoji.HOME} Menu", callback_data="menu")],
+        ])
+
+    def get_one_two_back_quote(self):
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"1. {emoji.PDF} Create supplier request", callback_data="1")],
+            [InlineKeyboardButton(f"2. {emoji.STATS} Show requests ", callback_data="2")],
+            [InlineKeyboardButton(f"{emoji.HOME} Menu", callback_data="menu")],
         ])
 
     def get_main_menu(self, admin_status: bool = False, new_user: bool = False) -> str:
@@ -288,9 +401,9 @@ class NavigationHandler:
             "",
             f"You can now:" if new_user else "Main menu:" 
             "\n",
-            f"1. Create new route {emogye.PLUS} - calculate bunker budget along the voyage",
-            f"2. Show my routes {emogye.FOLDER} - review saved routes and costs",
-            f"3. Check port’s fuel price & trends {emogye.STATS_LINE} - see indicative bunker prices by port and historical trends",
+            f"1. Analyse a route - calculate bunker budget…",
+            f"2. Check port’s price and trends-….",
+            f"3. Ask suppliers offer. Request live supplier prices — free and with no obligations.",
         ]
 
         if admin_status:
@@ -326,9 +439,19 @@ class NavigationHandler:
                 return session, err
 
 
-
         current_index = self._get_step_index(flow, session.current_step)
         if current_index <= 0:
+            if session.current_task == RouteTaskEnum.START.value:
+                session.current_step = StartStepEnum.ROLE.value
+                return await self.sql_db_service.update_session(session.user_id, session.current_task, session.current_step, session.route_id, session.data)
+
+            if session.current_task in (RouteTaskEnum.CREATE_ROUTE.value, RouteTaskEnum.SEARCH_ROUTE.value,):
+                return await self.sql_db_service.update_session(session.user_id, RouteTaskEnum.ROUTE_RESEARCH.value, None, session.route_id, session.data)
+
+            if session.current_task in (RouteTaskEnum.SUPPLIER_REQUEST_CREATE.value, RouteTaskEnum.SUPPLIER_REQUEST_LIST.value,):
+                return await self.sql_db_service.update_session(session.user_id, RouteTaskEnum.SUPPLIER_RESEARCH.value, None, None, session.data)
+
+
             # First step of task, return to main menu
             return await self.return_to_main_menu(session)
         prev_step = flow[current_index - 1]
@@ -341,9 +464,7 @@ class NavigationHandler:
             session.data,
         )
 
-    async def to_next_step(
-            self, session: SessionDB, route_data: Optional[Dict] = None
-    ) -> Tuple[Optional[SessionDB], Optional[str]]:
+    async def to_next_step(self, session: SessionDB, route_data: Optional[Dict] = None) -> Tuple[Optional[SessionDB], Optional[str]]:
 
         if not session.current_task:
             return session, "No active task"
@@ -424,7 +545,14 @@ class NavigationHandler:
             RouteStepEnum.MAIN_MENU.value,
             None,
             None,
-            SessionData(check_port_fuel_price=None, route_search=RouteSearch(), tariff_selection=TariffSelection(user_message=None, chosen_tariff=None ), user_search=UserSearch.from_dict({}), admin_update_tariff=AdminUpdateTariff.from_dict({})),  # Clear session data
+            SessionData(
+                check_port_fuel_price=None,
+                route_search=RouteSearch(),
+                tariff_selection=TariffSelection(user_message=None, chosen_tariff=None ),
+                user_search=UserSearch.from_dict({}),
+                admin_update_tariff=AdminUpdateTariff.from_dict({}),
+                quote_search=QuoteSearch.default(),
+            ),  # Clear session data
         )
 
     async def _can_proceed_to_next(

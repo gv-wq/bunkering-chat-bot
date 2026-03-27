@@ -24,7 +24,7 @@ class SearchRouteHandler:
     async def handle(self, session: SessionDB, message: str) -> ResponsePayloadCollection:
         if session.current_step is None:
             session.current_step = SearchRouteStepEnum.LIST.value
-            await self.db_service.update_session(session.user_id, session.current_task, session.current_step, None, session.data)
+            session, err = await self.db_service.update_session(session.user_id, session.current_task, session.current_step, None, session.data)
 
         if session.current_step == SearchRouteStepEnum.LIST.value:
             return await self._handle_list(session, message)
@@ -185,7 +185,7 @@ class SearchRouteHandler:
             await self.db_service.mark_route_deleted(uuid.UUID(route_id))
             session.current_step = SearchRouteStepEnum.LIST.value
             session.data.route_search.id = None
-            #await self.db_service.update_session(session.user_id, session.current_task, session.current_step, None, session.data)
+            session, err = await self.db_service.update_session(session.user_id, session.current_task, session.current_step, None, session.data)
             session, err = await self._apply_pagination(session, "")
             return await self.template_service.search_route_template(
                 session, "Route deleted" if not err else str(err)

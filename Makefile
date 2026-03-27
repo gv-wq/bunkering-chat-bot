@@ -22,6 +22,8 @@ CONTAINER_NAME := $(IMAGE_NAME)-container
 NETWORK_NAME := $(IMAGE_NAME)-network
 #PORT := $(BOT_HEALTH_CHECK_PORT):8000
 IMAGE_TAG := $(shell date +%Y-%m-%d)
+#IMAGE_TAG := v2_menu
+
 .PHONY: build push network run start stop restart logs exec rm clean up
 
 build:

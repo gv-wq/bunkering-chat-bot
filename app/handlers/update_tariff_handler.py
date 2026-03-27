@@ -1,4 +1,4 @@
-from app.data import emogye
+from app.data import emoji
 from app.data.dto.main.User import UserDB
 from app.data.dto.messenger.ResponsePayload import ResponsePayloadCollection, ResponsePayload
 from app.data.enums.RouteTask import RouteTaskEnum
@@ -103,19 +103,19 @@ class UpdateTariffHandler:
         err_messages = []
 
         if not user_db.filled_name:
-            err_messages.append(f"{emogye.CROSS_RED} Your name")
+            err_messages.append(f"{emoji.CROSS_RED} Your name")
 
         if not user_db.company_name:
-            err_messages.append(f"{emogye.CROSS_RED} company name")
+            err_messages.append(f"{emoji.CROSS_RED} company name")
 
         if not user_db.email:
-            err_messages.append(f"{emogye.CROSS_RED} email")
+            err_messages.append(f"{emoji.CROSS_RED} email")
 
         if not user_db.phone_number:
-            err_messages.append(f"{emogye.CROSS_RED} phone number")
+            err_messages.append(f"{emoji.CROSS_RED} phone number")
 
         if not session.data.tariff_selection.chosen_tariff:
-            err_messages.append(f"{emogye.CROSS_RED} chosen tariff")
+            err_messages.append(f"{emoji.CROSS_RED} chosen tariff")
 
         if len(err_messages) > 0:
             return await self.template_service.update_tariff_template(session, user_db, "Please fill: " + ", ".join(err_messages))
@@ -137,7 +137,7 @@ class UpdateTariffHandler:
         return ResponsePayloadCollection(
             responses=[
                 ResponsePayload(
-                    text=f'{emogye.MEMO} Your request was sent. We will contact you as soon as possible!'
+                    text=f'{emoji.MEMO} Your request was sent. We will contact you as soon as possible!'
                 )
             ]
         )

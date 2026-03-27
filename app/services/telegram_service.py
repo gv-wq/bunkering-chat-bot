@@ -17,7 +17,7 @@ from telegram.ext import (
     CallbackQueryHandler
 )
 
-from app.data import emogye
+from app.data import emoji
 from app.data.dto.main import ErrorLog
 from app.data.dto.main.ErrorLog import ErrorLogFactory
 from app.data.dto.main.Event import Event
@@ -61,7 +61,7 @@ class TelegramService:
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(
-            f'{emogye.HI} Hi!\n'
+            f'{emoji.HI} Hi!\n'
             'I help ship owners, operators & managers\n'
             'plan a vessel route, view bunker prices\n'
             'along the route, and estimate fuel costs — in under 2 minutes.\n\n'
@@ -97,14 +97,14 @@ class TelegramService:
             text=text,
             raw=update,
             meta={
-                "username": update.effective_user.username,
+                "user_name": update.effective_user.username,
                 "first_name": update.effective_user.first_name,
                 "last_name": update.effective_user.last_name,
             },
         )
 
     async def handle_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        query = update.callback_query
+        query = update.callback_data
         await query.answer()
 
         await self.handle_message(update=update, context=context, override_text=query.data)
@@ -227,7 +227,10 @@ class TelegramService:
 
         except Exception as ex:
             error = ErrorLogFactory.from_exception(ex=ex, position="telegram_handler")
-            await self.sql_db.log_error(error)
+            r, err = await self.sql_db.log_error(error)
+            logger.log(r)
+            if err:
+                logger.log(err)
             await message.reply_text("The error just happened. Admins are already noticed, dont worry.", parse_mode="HTML")
 
     async def run(self):

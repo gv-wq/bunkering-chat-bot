@@ -484,12 +484,12 @@ class WhatsApp360DialogService:
         elif message.get("type") == "interactive":
             interactive = message.get("interactive", {})
             if interactive.get("type") == "button_reply":
-                text = interactive.get("button_reply", {}).get("title")
+                text = interactive.get("button_reply", {}).get("id")
                 text = self.sanitize_message(text)
                 #logger.info(text)
 
             elif interactive.get("type") == "list_reply":
-                text = interactive.get("list_reply", {}).get("title")
+                text = interactive.get("list_reply", {}).get("id")
                 text = self.sanitize_message(text)
 
 
@@ -546,7 +546,12 @@ class WhatsApp360DialogService:
 
         except Exception as ex:
             error = ErrorLogFactory.from_exception(ex=ex, position="whatsapp_handler")
-            await self.sql_db.log_error(error)
+            r, err = await self.sql_db.log_error(error)
+            logger.log(ex)
+            logger.log(error)
+            logger.log(r)
+            if err:
+                logger.log(err)
             await self._send_text(event["wa_id"], "The error just happened. Admins are already noticed, dont worry.")
         finally:
                 progress_task.cancel()
@@ -720,15 +725,6 @@ button
     }
   ]
 }
-
-
-
-
-
-
-
-
-
 
 """
 

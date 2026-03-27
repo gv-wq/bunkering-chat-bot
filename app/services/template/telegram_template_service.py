@@ -1,9 +1,10 @@
 import base64
 import io
 import os
+import re
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from typing import Optional, List, Tuple, Dict
 
 from html import escape
@@ -11,9 +12,11 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from requests import session
 
-from app.data import emogye
+from app.data import emoji
 from app.data.dto.main.BunkeringStep import BunkeringStep
 from app.data.dto.main.DepartureToDestinationCoordinatesPath import DepartureToDestinationCoordinatesPath
+from app.data.dto.main.MabuxPortFuelPrice import MabuxPortFuelPriceDB
+from app.data.dto.main.QuoteRequestDB import QuoteRequestDB
 from app.data.dto.main.SeaPort import SeaPortDB
 from app.data.dto.main.SeaRoute import SeaRouteDB
 from app.data.dto.main.Session import SessionDB
@@ -23,8 +26,10 @@ from app.data.dto.messenger.ResponsePayload import (
     ResponsePayload,
     ResponsePayloadCollection, MediaFile, MediaImage,
 )
+from app.data.enums.QuoteRequestEnum import QuoteRequestEnum
 from app.data.enums.RouteStep import RouteStepEnum
 from app.data.enums.RouteTask import RouteTaskEnum
+from app.data.enums.StartStepEnum import StartStepEnum
 from app.data.enums.search_route_enum import SearchRouteStepEnum
 from app.handlers.navigation_handler import NavigationHandler
 from app.services.db_service import DbService
@@ -33,8 +38,21 @@ from app.services.utils import utils
 
 UNKNOWN = "—"
 MARK = "✔️"
-YELLOW_ALERT = "⚠️"
+
 PRICE_ON_REQUEST = "Price on request"
+
+
+
+ROLE_MAP = {
+    "Ship owner": "ship_owner",
+    "Ship operator": "ship_operator",
+    "Fleet / Voyage manager": "fleet_manager",
+    "Bunker trader / Supplier": "bunker_trader",
+    "Charterer": "charterer",
+    "Technical / Other": "technical_other",
+}
+
+
 from weasyprint import HTML
 from io import BytesIO
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -43,12 +61,16 @@ env = Environment(
     autoescape=select_autoescape(["html", "xml"])
 )
 
+
 class TemplateService:
     def __init__(self, sql_db: DbService, navigation_handler: NavigationHandler, map_image_api: MapBuilderApi):
         self.sql_db = sql_db
         self.navigation_handler = navigation_handler
         self.map_image_api = map_image_api
         self.MAX_MSG_LEN = 700  # example, set you
+
+    def _bold(self, s: str):
+        return f"<b>{s}</b>"
 
     async def session_template(self, session: SessionDB, err_msg: Optional[str] = None, is_admin: bool = None) -> ResponsePayloadCollection:
 
@@ -68,8 +90,32 @@ class TemplateService:
             )
             return await self.search_route_template(session=session, message=err_msg)
 
+        elif session.current_task == RouteTaskEnum.ROUTE_RESEARCH.value:
+            return await self.route_research_template()
+
+        elif session.current_task == RouteTaskEnum.SUPPLIER_RESEARCH.value:
+            return await self.quote_research_template(session, note=err_msg)
+
+
+        elif session.current_task == RouteTaskEnum.SUPPLIER_REQUEST_CREATE.value:
+            return await self.get_supplier_order_request(session=session, err_msg=err_msg)
+
+        elif session.current_task == RouteTaskEnum.SUPPLIER_REQUEST_LIST.value:
+            if session.current_step == SearchRouteStepEnum.CONFIRM_DELETE.value:
+                return ResponsePayloadCollection(
+                    responses=[ResponsePayload(
+                        text=" <b>Are you sure?\n1. Yes\n0. Cancel\n </b> ",
+                        keyboard=self.navigation_handler.get_yes_no_keyboard()
+                    )]
+                )
+            return await self.quote_search_template(session=session, message=err_msg)
+
         elif session.current_task == RouteTaskEnum.ADMIN.value:
             return await self.list_users_template(session=session, message=err_msg)
+
+        elif session.current_task == RouteTaskEnum.START.value:
+            return await self.return_start_template(session, err_msg=err_msg)
+
 
         return ResponsePayloadCollection(
             responses=[
@@ -129,6 +175,72 @@ class TemplateService:
     async def _handle_unknown_intent(self, *args, **kwargs) -> ResponsePayloadCollection:
         return ResponsePayloadCollection(responses=[ResponsePayload(text="Sorry, I didn't understand that. Please try again.")])
 
+    async def get_supplier_order_request(self, session: SessionDB, err_msg: Optional[str] = None):
+        quote_er, err = await self.sql_db.get_or_create_quote_request(session)
+        if err:
+            return ResponsePayload(err=err, keyboard=None)
+
+        s = session.current_step
+        if s == QuoteRequestEnum.VESSEL_NAME.value:
+            return await self.quote_vessel_name(session=session, quote_r=quote_er, note=err_msg)
+
+        if s == QuoteRequestEnum.VESSEL_IMO.value:
+            return await self.quote_vessel_imo(session=session, quote_r=quote_er, note=err_msg)
+
+
+        if s == QuoteRequestEnum.PORT_SEARCH.value:
+            return await self.quote_port_search(session=session, quote_r=quote_er, note=err_msg)
+
+        if s == QuoteRequestEnum.ETA.value:
+            return await self.quote_eta(session=session, quote_r=quote_er, note=err_msg)
+
+        # if s == QuoteRequestEnum.ETA_TO.value:
+        #     return await self.quote_eta(session=session, quote_r=quote_er, note=err_msg)
+
+        if s == QuoteRequestEnum.FUEL_QUANTITY.value:
+            return await self.quote_fuel_quantity(session=session, quote_r=quote_er, note=err_msg)
+
+        if s == QuoteRequestEnum.REMARK.value:
+            return await self.quote_remarks(session=session, quote_r=quote_er, note=err_msg)
+
+        if s == QuoteRequestEnum.COMPANY_NAME.value:
+            return await self.quote_company_name(session=session, quote_r=quote_er, note=err_msg)
+
+        if s == QuoteRequestEnum.EMAIL.value:
+            return await self.quote_user_email(session=session, quote_r=quote_er, message=err_msg)
+
+        if s == QuoteRequestEnum.ANOTHER_QUOTE_REQUEST.value:
+            return await self.quote_another_quote_request(session=session, quote_r=quote_er, note=err_msg)
+
+        return await self._handle_unknown_intent(session, quote_er, err_msg)
+
+
+    async def return_start_template(self, session: SessionDB, err_msg: str = None):
+        user, err = await self.sql_db.get_user_by_id(session.user_id)
+        if not user or err:
+            return ResponsePayload(err=err, keyboard=None)
+
+        s = session.current_step
+        if s == StartStepEnum.ROLE.value:
+            return await self.new_start_template(session, "Could not find your user. Try again.")
+
+        if s == StartStepEnum.USER_NAME.value:
+            return await self.user_name_template(session=session, message=err_msg,)
+
+        if s == StartStepEnum.COMPANY_NAME.value:
+            return await self.start_company_name_template(session=session, user=user, note=err_msg)
+
+        if s == StartStepEnum.PHONE_NUMBER.value:
+            return await self.start_phone_number_template(session=session, user=user, note=err_msg)
+
+        if s == StartStepEnum.EMAIL.value:
+            return await self.start_user_email_template(session=session, user=user, note=err_msg)
+
+        if s == StartStepEnum.PROMOCODE.value:
+            return await self.user_promocode_template(session=session, user=user, note=err_msg)
+
+        return await self._handle_unknown_intent()
+
 
     async def get_new_route_header(self, session: SessionDB, route: SeaRouteDB, add_lines: List[str] = None, update_status: bool = False):
 
@@ -152,13 +264,13 @@ class TemplateService:
 
         if route.vessel_name:
             if is_updating and session.current_step == RouteStepEnum.VESSEL_NAME.value:
-                lines.append(f"{emogye.PLAY}  <b>Vessel name (current):</b>  {route.vessel_name}")
+                lines.append(f"{emoji.PLAY}  <b>Vessel name (current):</b>  {route.vessel_name}")
             else:
                 lines.append(f" <b>Vessel name:</b>  {route.vessel_name}")
 
         if route.imo_number:
             if is_updating and session.current_step == RouteStepEnum.VESSEL_IMO.value:
-                lines.append(f"{emogye.PLAY}  <b>IMO number (current):</b> {route.vessel_name}")
+                lines.append(f"{emoji.PLAY}  <b>IMO number (current):</b> {route.vessel_name}")
             else:
                 lines.append(f" <b>IMO number:</b> {route.imo_number}")
 
@@ -187,18 +299,102 @@ class TemplateService:
 
         if route.departure_date:
             if is_updating and session.current_step == RouteStepEnum.DEPARTURE_DATE.value:
-                lines.append(f"{emogye.PLAY} <b>Departure date (current):</b> {route.departure_date.strftime('%B %d, %Y')}")
+                lines.append(f"{emoji.PLAY} <b>Departure date (current):</b> {route.departure_date.strftime('%B %d, %Y')}")
             else:
                 lines.append(f" <b>Departure date:</b> {route.departure_date.strftime('%B %d, %Y')}")
 
         if route.average_speed_kts:
             if is_updating and session.current_step == RouteStepEnum.AVERAGE_SPEED.value:
-                lines.append(f"{emogye.PLAY}  <b>Avg.speed (current):</b> {route.average_speed_kts} knots")
+                lines.append(f"{emoji.PLAY}  <b>Avg.speed (current):</b> {route.average_speed_kts} knots")
             else:
                 lines.append(f" <b>Avg. speed:</b> {route.average_speed_kts} knots")
 
         lines.append(" ")
         return "\n".join(lines)
+
+    async def get_quote_request_header(
+            self,
+            session: SessionDB,
+            quote_r: QuoteRequestDB,
+            add_lines: List[str] = None
+    ) -> str:
+
+        title = self.navigation_handler.get_quote_request_step_title(session.current_step)
+
+        def fmt(v, default="-"):
+            return v if v not in (None, "", 0) else default
+
+        lines = [
+            f"{emoji.DOC} {self._bold(title)}",
+            ""
+        ]
+
+        # -------- BASIC INFO --------
+        if quote_r.vessel_name:
+            lines.append(f"{emoji.SHIP} {self._bold('Vessel:')} {quote_r.vessel_name}")
+
+        if quote_r.vessel_imo:
+            lines.append(f"{emoji.ID} {self._bold('IMO:')} {quote_r.vessel_imo}")
+
+        if quote_r.port_id:
+            port, _ = await self.sql_db.get_port_by_id(quote_r.port_id)
+            if port:
+                lines.append(f"{emoji.PIN} {self._bold('Port:')} {port.format_port()}")
+
+        if quote_r.eta_from or quote_r.eta_to:
+            eta_from = quote_r.eta_from.strftime('%b %d, %Y') if quote_r.eta_from else "-"
+            eta_to = quote_r.eta_to.strftime('%b %d, %Y') if quote_r.eta_to else "-"
+            lines.append(f"{emoji.CALENDAR} {self._bold('ETA:')} {eta_from} → {eta_to}")
+
+        # -------- FUELS --------
+        total_cost = 0
+        has_fuels = quote_r.fuels and any(f.quantity and f.quantity > 0 for f in quote_r.fuels)
+
+        if has_fuels and not session.current_step == QuoteRequestEnum.FUEL_QUANTITY.value:
+            lines.extend([
+                "",
+                f"{emoji.OIL_DUM} {self._bold('Estimated fuel cost:')}"
+            ])
+
+            for f in quote_r.fuels:
+                if not f.quantity:
+                    continue
+
+                qty = f.quantity
+                price = fmt(f.price)
+
+                cost = None
+                if f.quantity and f.price:
+                    cost = f.quantity * f.price
+                    total_cost += cost
+
+                cost_str = f"${cost}" if cost is not None else "-"
+
+                lines.append(
+                    f"  • {self._bold(f.fuel_name)}: {qty} mt × {price} → {cost_str}"
+                )
+
+            lines.extend([
+                "",
+                f"{self._bold('Total:')} ${total_cost if total_cost else '-'}"
+            ])
+
+        # -------- COMPANY --------
+        if quote_r.company_name:
+            lines.append(f"{emoji.OFFICE} {self._bold('Company:')} {quote_r.company_name}")
+
+        # -------- REMARK --------
+        if quote_r.remark:
+            lines.append(f"{emoji.NOTE} {self._bold('Remark:')} {quote_r.remark}")
+
+        # -------- EXTRA --------
+        if add_lines:
+            lines.extend([""] + add_lines)
+
+        lines.append("")
+
+        return "\n".join(lines)
+
 
     async def get_show_route_header(self, route: SeaRouteDB, add_lines: List[str] = None):
 
@@ -215,7 +411,7 @@ class TemplateService:
             destination_port, dest_err = await self.sql_db.get_port_by_id(route.destination_port_id)
             # destination_port = route.data.port_selection.destination_candidate
 
-        lines = [f"{emogye.ANCHOR} New route - From {departure_port.locode if departure_port else ''} to {destination_port.locode if destination_port else ''}"]
+        lines = [f"{emoji.ANCHOR} New route - From {departure_port.locode if departure_port else ''} to {destination_port.locode if destination_port else ''}"]
 
         if add_lines:
             lines.extend(add_lines)
@@ -260,137 +456,15 @@ class TemplateService:
 
         return ResponsePayloadCollection(responses=[ResponsePayload(text=text, keyboard=self.navigation_handler.get_main_menu_keyboard(session))])
 
-    #
-    #
-    # async def port_nearby_template(self, session: SessionDB, route: SeaRouteDB, message: Optional[str] = None):
-    #     candidate = None
-    #     is_departure = True
-    #     is_suggestion = False
-    #     if session.current_step == RouteStepEnum.DEPARTURE_PORT_NEARBY.value:
-    #         prompt = "Enter departure port name."
-    #         candidate = route.data.port_selection.departure_candidate
-    #         nearby = route.data.port_selection.departure_nearby or []
-    #         port_arrow = emogye.ARROW_UP
-    #         port_color = "blue"
-    #         is_departure = True
-    #         #nearby_image = route.departure_nearby_image
-    #     else:
-    #         prompt = "Enter destination port name."
-    #         candidate = route.data.port_selection.destination_candidate
-    #         nearby = route.data.port_selection.destination_nearby or []
-    #         port_arrow = emogye.ARROW_DOWN
-    #         port_color = "red"
-    #         is_departure = False
-    #
-    #
-    #         #nearby_image = route.destination_nearby_image
-    #
-    #     images = []
-    #
-    #     nav = self.navigation_handler.get_navigation_text(session)
-    #     map_link = self.map_image_api.get_search_port_map_link(str(session.route_id), is_departure, is_suggestion)
-    #     header = await self.get_new_route_header(session, route)
-    #     # Build base top lines
-    #     top = [header]
-    #
-    #     if route.data.is_updating:
-    #         top.append("Waiting for update...")
-    #
-    #     add_lines = []
-    #     if candidate:
-    #         top.append(candidate.format_port(is_departure))
-    #         top.append(f"\nWrite yes(y), confirm when port is correct")
-    #         top.append(f"Or enter new name")
-    #         top.append(f"Or choose from list (e.g. 1, 2, 3).")
-    #     else:
-    #         top.append(prompt)
-    #
-    #
-    #     if message:
-    #         top.append("")
-    #         top.append(message)
-    #     #if len(nearby) > 0:
-    #         #top.append("")
-    #         #top.append("Options:")
-    #     top.append("")
-    #
-    #
-    #
-    #     # --------------------- BUILD IMAGE -----------------------------
-    #     indexed = []
-    #     if candidate:
-    #         indexed.append(candidate.to_indexed2(port_arrow, port_color, "medium", True))
-    #
-    #     for i, port in enumerate(nearby, 1):
-    #         indexed.append(port.to_indexed2(str(i), "orange", "medium", False))
-    #
-    #     images_generated = await self.map_image_api.render_map_images([], indexed, True)
-    #     images.extend(images_generated)
-    #
-    #     responses = []
-    #
-    #     def chunks(lst, size):
-    #         for i in range(0, len(lst), size):
-    #             yield lst[i:i + size]
-    #
-    #     counter = 1
-    #     if nearby:
-    #         nearby_chunks = list(chunks(nearby, 7))
-    #
-    #
-    #         if len(nearby_chunks) > 0:
-    #             first_lines = top + ["Nearby ports:"]
-    #             for i, p in enumerate(nearby_chunks[0], 1):
-    #                 first_lines.append(p.format_indexed(counter))
-    #                 #first_lines.append(f"{counter}. {p.port_name} - {p.country_name} - {p.locode} {"(" + p.port_size  + ")"  if p.port_size else  "(unknown size)\n"}")
-    #                 counter += 1
-    #
-    #             if counter == len(nearby) + 1:
-    #                 first_lines.append(f"\n\n{emogye.PLANET} On map:\n" + map_link)
-    #                 first_lines.append(nav)
-    #
-    #             #images = [img for img in [nearby_image] if img]
-    #             responses.append(
-    #                 ResponsePayload(
-    #                     text="\n".join(first_lines),
-    #                     images=images,
-    #                 )
-    #             )
-    #
-    #         for chunk in nearby_chunks[1:]:
-    #             lines = [] #["Nearby ports:"]
-    #             for p in chunk:
-    #                 lines.append(p.format_indexed(counter))
-    #                 #lines.append(f"{counter}. {p.port_name} - {p.country_name} - {p.locode} {"(" + p.port_size  + ")" if p.port_size else  "(unknown size)\n"}")
-    #                 counter += 1
-    #
-    #             if counter == len(nearby) + 1:
-    #                 lines.append(f"\n\n{emogye.PLANET} On map:\n" + map_link)
-    #                 lines.append(nav)
-    #
-    #             responses.append(ResponsePayload(text="\n".join(lines)))
-    #
-    #
-    #     else:
-    #
-    #         responses.append(
-    #             ResponsePayload(
-    #                 text="\n".join(top) +  "\nI couldn’t find any large ports nearby. Please go back and enter a nearby major port if needed. Thanks!\n" +  f"\n{emogye.PLANET} On map:\n" + map_link + nav,
-    #                 images=images,
-    #             )
-    #         )
-    #
-    #
-    #     return ResponsePayloadCollection(responses=responses)
 
     async def departure_date_template(self, session: SessionDB, route: SeaRouteDB, message: Optional[str] = None) -> ResponsePayloadCollection:
         lines = []
 
         if route.data.is_updating:
-            lines.append(f"\n{emogye.THIS} Waiting for new departure date...\n")
+            lines.append(f"\n{emoji.THIS} Waiting for new departure date...\n")
 
         lines.extend([
-            f"\n{emogye.THIS}  <b> Confirm or enter new date. </b> \n" if route.departure_date else f"\n{emogye.THIS}  <b> Departure date? </b> \n",
+            f"\n{emoji.THIS}  <b> Confirm or enter new date. </b> \n" if route.departure_date else f"\n{emoji.THIS}  <b> Departure date? </b> \n",
         ])
         if message:
             lines.append(f"Note: {message}")
@@ -419,7 +493,7 @@ class TemplateService:
         text = header_text + text + navigation_text
         #text = header_text + navigation_text
 
-        return ResponsePayloadCollection(responses=[ResponsePayload(text=text, keyboard=self.navigation_handler.get_navigation_keyboard(session.current_step))])
+        return ResponsePayloadCollection(responses=[ResponsePayload(text=text, keyboard=self.navigation_handler.get_navigation_keyboard(session.current_step, show_yes=bool(route.departure_date)))])
 
     async def average_speed_template(self, session: SessionDB, route: SeaRouteDB, message: Optional[str] = None) -> ResponsePayloadCollection:
 
@@ -429,9 +503,9 @@ class TemplateService:
         #   lines.append(f"\n Waiting for avg. speed value...\n")
 
         if route.average_speed_kts:
-            lines.append(f"\n{emogye.THIS} <b>Enter new or confirm with yes(y). </b> \n")
+            lines.append(f"\n{emoji.THIS} <b>Enter new or confirm with yes(y). </b> \n")
         else:
-            lines.append(f"\n{emogye.THIS} <b>Enter vessel avg. speed in knots. </b> ")
+            lines.append(f"\n{emoji.THIS} <b>Enter vessel avg. speed in knots. </b> ")
 
         if message:
             lines.append(f"Note: {message}")
@@ -440,7 +514,7 @@ class TemplateService:
         navigation_text = self.navigation_handler.get_navigation_text(session)
         text = header_text + "\n".join(lines) + navigation_text
 
-        keyboard = self.navigation_handler.get_navigation_keyboard(session.current_step)
+        keyboard = self.navigation_handler.get_navigation_keyboard(session.current_step, show_yes=bool(route.average_speed_kts))
 
 
         return ResponsePayloadCollection(responses=[ResponsePayload(text=text, keyboard=keyboard)])
@@ -450,10 +524,10 @@ class TemplateService:
         lines = []
 
         if route.data.is_updating:
-            lines.append("\nWaiting for new departure date...\n")
+            lines.append("\nWaiting for fuels list update...\n")
 
         lines.extend([
-            f"\n{emogye.THIS}  <b> Please confirm with yes(y) or choose again (e.g. 1, 2): </b> \n"
+            f"\n{emoji.THIS}  <b> Please confirm with yes(y) or choose again (e.g. 1, 2): </b> \n"
         ])
 
         if err_msg:
@@ -472,7 +546,7 @@ class TemplateService:
         user_fuel_names = set([f.name for f in route.fuels])
 
         for i, fuel in enumerate(available_fuels, 1):
-            postfix =  emogye.CHECK_GRAY if fuel.name in user_fuel_names else ""
+            postfix =  emoji.CHECK_GRAY if fuel.name in user_fuel_names else ""
             lines.append(f"{i}. {fuel.name} {postfix}")
 
         #lines.append("\nWhen done, enter fine, yes(y)\n")
@@ -482,13 +556,13 @@ class TemplateService:
         navigation_text = self.navigation_handler.get_navigation_text(session)
 
         text = header_text + body_text + navigation_text
-        return ResponsePayloadCollection(responses=[ResponsePayload(text=text,keyboard=self.navigation_handler.get_navigation_keyboard())])
+        return ResponsePayloadCollection(responses=[ResponsePayload(text=text,keyboard=self.navigation_handler.get_navigation_keyboard(show_yes=bool(len(list(user_fuel_names)) > 0)))])
 
 
     def format_port_block(self, step: BunkeringStep, index):
         """Return a full port block: header + all fuels."""
         p = step.port
-        mark = emogye.CHECK_GREEN_BACKGROUND if step.selected else emogye.CROSS_GRAY
+        mark = emoji.CHECK_GREEN_BACKGROUND if step.selected else emoji.CROSS_GRAY
 
         lines = [
             f"{index}. [{mark}] {p.port_name} - {p.country_name} - {p.locode}",
@@ -569,10 +643,10 @@ class TemplateService:
         destination_candidate = route.data.port_selection.destination_candidate
 
         if departure_candidate:
-            indexed.append(departure_candidate.to_indexed2(emogye.ARROW_UP, "blue", "medium", True))
+            indexed.append(departure_candidate.to_indexed2(emoji.ARROW_UP, "blue", "medium", True))
 
         if destination_candidate:
-            indexed.append(destination_candidate.to_indexed2(emogye.ARROW_DOWN, "red", "medium", True))
+            indexed.append(destination_candidate.to_indexed2(emoji.ARROW_DOWN, "red", "medium", True))
 
         for i, step in enumerate(steps, 1):
             color = "gray"
@@ -631,17 +705,17 @@ class TemplateService:
 
         # Mode instructions
         if mode == RouteStepEnum.ROUTE_PORT_LIST.value:
-            first.append(f"{emogye.THIS}  <b> Select ports with 1, 2, 3 - 5\nOr confirm all (yes/y). </b> ")
+            first.append(f"{emoji.THIS}  <b> Select ports with 1, 2, 3 - 5\nOr confirm all (yes/y). </b> ")
 
             if show_remove_status:
                 first.append(" <b> To remove ports from the list, use: </b> ")
                 first.append(" <b> remove 1, 2, 3 - 5 </b> ")
 
-            first.append(f"\n{emogye.STAR} - cheapest port.")
-            first.append(f"{emogye.CHECK_GRAY} - selected port.")
+            first.append(f"\n{emoji.STAR} - cheapest port.")
+            first.append(f"{emoji.CHECK_GRAY} - selected port.")
 
         else:
-            first.append(f"{emogye.NOTE_THIS}  <b> Enter quantities per port in this format:")
+            first.append(f"{emoji.NOTE_THIS}  <b> Enter quantities per port in this format:")
             first.append("port_number fuel1 fuel2")
             first.append("Separate ports with /")
             first.append("Example: 1 200 100 / 4 500 10 </b> ")
@@ -726,10 +800,10 @@ class TemplateService:
 
         # --- Navigation last ---
 
-        last_parts.append(f"\n{emogye.PLANET} On map: \n" + route_map_link)
+        last_parts.append(f"\n{emoji.PLANET} On map: \n" + route_map_link)
         last_parts.append( self.navigation_handler.get_navigation_text(session))
 
-        responses.append(ResponsePayload(text="\n".join(last_parts), keyboard=self.navigation_handler.get_navigation_keyboard(session.current_step)))
+        responses.append(ResponsePayload(text="\n".join(last_parts), keyboard=self.navigation_handler.get_navigation_keyboard(session.current_step, show_yes=True)))
 
         return ResponsePayloadCollection(responses=responses)
 
@@ -802,16 +876,16 @@ class TemplateService:
         if session.current_step == RouteStepEnum.DEPARTURE_PORT_SUGGESTION.value:
             candidate = route.data.port_selection.departure_candidate
             suggestions = route.data.port_selection.departure_suggestions
-            prompt = f"\n{emogye.THIS}  <b> Type yes(y) to confirm if port is correct</b>\n       <b>or Enter new name</b>\n       <b>Or Choose from list (e.g. 1, 2, 3). </b> " if candidate else f"{emogye.THIS}  <b>What’s your departure port?</b> "
-            port_arrow = emogye.ARROW_UP
+            prompt = f"\n{emoji.THIS}  <b> Type yes(y) to confirm if port is correct</b>\n       <b>or Enter new name</b>\n       <b>Or Choose from list (e.g. 1, 2, 3). </b> " if candidate else f"{emoji.THIS}  <b>What’s your departure port?</b> "
+            port_arrow = emoji.ARROW_UP
             port_color = "purple"
 
         else:
             candidate = route.data.port_selection.destination_candidate
             suggestions = route.data.port_selection.destination_suggestions
-            prompt = f"\n{emogye.THIS}  <b> Type yes(y) to confirm if port is correct</b>\n       <b>or Enter new name</b>\n       <b>Or Choose from list (e.g. 1, 2, 3).</b> " if candidate else f"{emogye.THIS}  <b>What’s your destination port?</b> "
+            prompt = f"\n{emoji.THIS}  <b> Type yes(y) to confirm if port is correct</b>\n       <b>or Enter new name</b>\n       <b>Or Choose from list (e.g. 1, 2, 3).</b> " if candidate else f"{emoji.THIS}  <b>What’s your destination port?</b> "
 
-            port_arrow = emogye.ARROW_DOWN
+            port_arrow = emoji.ARROW_DOWN
             port_color = "purple"
             is_departure = False
 
@@ -850,7 +924,7 @@ class TemplateService:
                     ResponsePayload(
                         text="\n".join(top) + nav,
                         images=images,
-                        keyboard=self.navigation_handler.get_navigation_keyboard(session.current_step)
+                        keyboard=self.navigation_handler.get_navigation_keyboard(session.current_step, show_yes=False)
                     )
                 ]
             )
@@ -906,9 +980,106 @@ class TemplateService:
         # )
 
         responses[-1].text +=  "\nOn map:\n" + map_link + nav
-        responses[-1].keyboard = self.navigation_handler.get_navigation_keyboard(session.current_step)
+        responses[-1].keyboard = self.navigation_handler.get_navigation_keyboard(session.current_step, show_yes=True)
 
         return ResponsePayloadCollection(responses=responses)
+
+
+
+
+
+    async def single_port_suggestion_template(self,  session: SessionDB, quote_r: QuoteRequestDB, message: Optional[str] = None):
+        search_query = quote_r.data.port_search.query
+        candidate = quote_r.data.port_search.port
+        suggestions = quote_r.data.port_search.ports
+
+        prompt = f"\n{emoji.THIS}  <b> Type yes(y) to confirm if port is correct</b>\n       <b>or Enter new name</b>\n       <b>Or Choose from list (e.g. 1, 2, 3). </b> " if candidate else f"{emoji.THIS}  <b>What’s your departure port?</b> "
+        port_arrow = emoji.QUESTION
+        port_color = "purple"
+
+        images = []
+
+        nav = self.navigation_handler.get_navigation_text(session)
+        map_link = "link will be ready soon "#self.map_image_api.get_search_port_as_name_map_link(search_query)
+
+        top = []
+
+        if candidate:
+            top.append(candidate.format_port())
+
+        top.append(prompt)
+
+
+        if message:
+            top.extend(["", message])
+
+        # ---------------------- NO SUGGESTIONS ----------------------
+        if not suggestions:
+            return ResponsePayloadCollection(
+                responses=[
+                    ResponsePayload(
+                        text="\n".join(top) + nav,
+                        images=images,
+                        keyboard=self.navigation_handler.get_navigation_keyboard(session.current_step, show_yes=False)
+                    )
+                ]
+            )
+
+        # --------------------- BUILD IMAGE -----------------------------
+        indexed = []
+
+        if candidate:
+            indexed.append(candidate.to_indexed2(port_arrow, port_color, "medium", True))
+
+        for i, port in enumerate(suggestions, 1):
+            indexed.append(port.to_indexed2(str(i), "orange", "medium", False))
+
+        images_generated = await self.map_image_api.render_map_images([], indexed, True)
+        images.extend([MediaImage(content=content) for content in images_generated])
+
+        # ---------------------- BUILD ATOMIC BLOCKS ----------------------
+        global_counter = 1
+        blocks = []
+
+        for p in suggestions:
+            blocks.append(p.format_indexed(global_counter))
+            global_counter += 1
+
+        # ---------------------- CHUNKING ----------------------
+
+        header = "\n".join(top) + "\n\nSelect from:\n" if len(suggestions) > 0 else "I couldn’t find this port.\n Please try again or enter a nearby major port."
+        first_limit = self.MAX_MSG_LEN - len(header)
+
+        responses = []
+
+        # ---------- FIRST MESSAGE ----------
+        first_blocks = self.split_blocks(blocks, first_limit)
+
+        responses.append(
+            ResponsePayload(
+                text=header + first_blocks[0],
+                images=images,
+                keyboard=None
+            )
+        )
+
+        # ---------- MIDDLE ----------
+        for chunk in first_blocks[1:]:
+            responses.append(ResponsePayload(text=chunk))
+
+        # ---------- LAST ----------
+        # responses.append(
+        #     ResponsePayload(
+        #         text=first_blocks[-1] + "\nOn map:\n" + map_link + nav
+        #     )
+        # )
+
+        responses[-1].text += "\nOn map:\n" + map_link + nav
+        responses[-1].keyboard = self.navigation_handler.get_navigation_keyboard(session.current_step, show_yes=True)
+
+        return ResponsePayloadCollection(responses=responses)
+
+
 
     def split_text_chunks(self, lines: list[str], footer: str = "") -> list[str]:
         chunks = []
@@ -946,7 +1117,7 @@ class TemplateService:
             f"Departure date: {route.departure_date.strftime('%Y-%m-%d') if route.departure_date else UNKNOWN}",
             f"Speed: {route.average_speed_kts or UNKNOWN} kn",
             "",
-            f"{emogye.PLANET} Map:",
+            f"{emoji.PLANET} Map:",
             self.map_image_api.get_route_map_link(str(route.id)),
             "",
         ])
@@ -991,10 +1162,10 @@ class TemplateService:
 
         # ---------------------- HEADER ----------------------
         header_lines = [
-            f"{emogye.PIN} My routes",
+            f"{emoji.PIN} My routes",
          #   f"Departure date filter: {search.date.strftime('%B %d, %Y') if search.date else UNKNOWN}",
             "",
-            f"{emogye.THIS}  <b> Choose from list (e.g. 1, 2, 3). </b> ",
+            f"{emoji.THIS}  <b> Choose from list (e.g. 1, 2, 3). </b> ",
         #    "To add the departure date filter, enter the date please.",
         ]
 
@@ -1019,9 +1190,9 @@ class TemplateService:
             # ---- map markers ----
             indexed = []
             if dep_port:
-                indexed.append(dep_port.to_indexed2(emogye.ARROW_UP, "green", "medium", True))
+                indexed.append(dep_port.to_indexed2(emoji.ARROW_UP, "green", "medium", True))
             if dest_port:
-                indexed.append(dest_port.to_indexed2(emogye.ARROW_DOWN, "red", "medium", True))
+                indexed.append(dest_port.to_indexed2(emoji.ARROW_DOWN, "red", "medium", True))
 
             for step in route.bunkering_steps:
                 if not step.selected:
@@ -1043,7 +1214,7 @@ class TemplateService:
             global_counter += 1
 
         if not route_blocks:
-            route_blocks.append(f"{YELLOW_ALERT} No routes found.\n")
+            route_blocks.append(f"{emoji.YELLOW_ALERT} No routes found.\n")
 
         # ---------------------- CHUNKING ----------------------
         first_limit = self.MAX_MSG_LEN - len(header)
@@ -1112,12 +1283,12 @@ class TemplateService:
 
         if departure_candidate:
             indexed.append(
-                departure_candidate.to_indexed2(emogye.ARROW_UP, "blue", "medium", True)
+                departure_candidate.to_indexed2(emoji.ARROW_UP, "blue", "medium", True)
             )
 
         if destination_candidate:
             indexed.append(
-                destination_candidate.to_indexed2(emogye.ARROW_DOWN, "red", "medium", True)
+                destination_candidate.to_indexed2(emoji.ARROW_DOWN, "red", "medium", True)
             )
 
         for i, step in enumerate(steps, 1):
@@ -1163,7 +1334,7 @@ class TemplateService:
         ]
 
         header_lines.extend([
-            f"{emogye.THIS}  <b> Do you want to update the route?:</b>",
+            f"{emoji.THIS}  <b> Do you want to update the route?:</b>",
             ' <b>Enter yes(y) to do it,</b>',
             '',
             ' <b>Or enter "remove" to remove it.</b> '
@@ -1261,7 +1432,7 @@ class TemplateService:
         # -------- ROUTE ACTION NAVIGATION --------
         last_parts.extend([
             "",
-            f"{emogye.PLANET} Map:",
+            f"{emoji.PLANET} Map:",
             route_map_link,
             "",
 
@@ -1568,9 +1739,9 @@ class TemplateService:
         # ============================================================
         indexed = []
         if departure:
-            indexed.append(departure.to_indexed2(emogye.ARROW_UP, "green", "medium", True))
+            indexed.append(departure.to_indexed2(emoji.ARROW_UP, "green", "medium", True))
         if destination:
-            indexed.append(destination.to_indexed2(emogye.ARROW_DOWN, "red", "medium", True))
+            indexed.append(destination.to_indexed2(emoji.ARROW_DOWN, "red", "medium", True))
 
         for step in steps:
             indexed.append(step.port.to_indexed2(str(step.n), "blue", "medium", False))
@@ -1615,9 +1786,9 @@ class TemplateService:
         # ============================================================
         indexed = []
         if departure:
-            indexed.append(departure.to_indexed2(emogye.ARROW_UP, "green", "medium", True))
+            indexed.append(departure.to_indexed2(emoji.ARROW_UP, "green", "medium", True))
         if destination:
-            indexed.append(departure.to_indexed2(emogye.ARROW_DOWN, "red", "medium", True))
+            indexed.append(departure.to_indexed2(emoji.ARROW_DOWN, "red", "medium", True))
 
         for step in steps:
             if not step.selected:
@@ -1731,8 +1902,8 @@ class TemplateService:
             row = {
                 "Port": p.format_port().replace("\n", ""),
                 #"UNLOCODE": p.locode,
-                "Arrival date": step.eta_datetime.strftime("%B %d, %Y") if step.eta_datetime else emogye.LINE,
-                "Port info": p.agent_contact_list if p.agent_contact_list else emogye.LINE,
+                "Arrival date": step.eta_datetime.strftime("%B %d, %Y") if step.eta_datetime else emoji.LINE,
+                "Port info": p.agent_contact_list if p.agent_contact_list else emoji.LINE,
                 "Fuel delivery method": self.render_delivery_basis(p),
             }
 
@@ -1930,7 +2101,7 @@ class TemplateService:
         if route.data.port_selection.destination_candidate:
             destination_port = route.data.port_selection.destination_candidate
 
-        lines = [f"{emogye.ANCHOR} New route report"]
+        lines = [f"{emoji.ANCHOR} New route report"]
         if departure_port:
             lines.append(
                 f"Departure: {departure_port.port_name} - {departure_port.country_name} - {departure_port.locode}"
@@ -1964,10 +2135,10 @@ class TemplateService:
 
         indexed = []
         if departure_port:
-            indexed.append(departure_port.to_indexed2(emogye.ARROW_UP, "green", "medium", True))
+            indexed.append(departure_port.to_indexed2(emoji.ARROW_UP, "green", "medium", True))
 
         if destination_port:
-            indexed.append(destination_port.to_indexed2(emogye.ARROW_DOWN, "red", "medium", True))
+            indexed.append(destination_port.to_indexed2(emoji.ARROW_DOWN, "red", "medium", True))
 
         for step in steps:
             indexed.append(step.port.to_indexed2(str(step.n), "blue", "medium", False))
@@ -1986,7 +2157,7 @@ class TemplateService:
                     ResponsePayload(
                         text=header + "\nNo ports available.",
                         images=images,
-                        keyboard=self.navigation_handler.get_navigation_keyboard()
+                        keyboard=self.navigation_handler.get_navigation_keyboard(show_yes=False)
                     )
                 ]
             ), subject, False
@@ -2067,12 +2238,12 @@ class TemplateService:
         return ResponsePayloadCollection(responses=responses), subject, True
 
     async def get_port_fuel_price_template(self, session: SessionDB, message: str = None):
-        lines = [f"{emogye.STATS_LINE} Check port price"]
+        lines = [f"{emoji.STATS_LINE} Check port price"]
         images = []
 
         # --- If no port search started ---
         if not getattr(session.data, "check_port_fuel_price", None):
-            lines.append(f"\n{emogye.THIS}  <b> Enter the port info to search prices. </b> ")
+            lines.append(f"\n{emoji.THIS}  <b> Enter the port info to search prices. </b> ")
             if message:
                 lines.append(f"\nErr: {message}")
 
@@ -2081,16 +2252,16 @@ class TemplateService:
                 "Navigation:",
                 "- menu - to main menu",
             ])
-            return ResponsePayloadCollection(responses=[ResponsePayload(text=chr(10).join(lines), keyboard=self.navigation_handler.get_menu_keyboard())])
+            return ResponsePayloadCollection(responses=[ResponsePayload(text=chr(10).join(lines), keyboard=self.navigation_handler.get_from_port_price_to_main_menu_keyboard(session))])
 
         # --- Extract port and prices safely ---
         port_info = getattr(session.data.check_port_fuel_price, "port", None)
         prices = getattr(session.data.check_port_fuel_price, "prices", [])
         port_alternatives = getattr(session.data.check_port_fuel_price, "port_alternatives", [])
 
-        if not port_info:
-            lines.append("\n⚠️ Port information is missing.")
-        else:
+        if port_info: #not
+        #     lines.append("\n⚠️ Port information is missing.")
+        # else:
             lines.append(f"Port: {port_info.format_port() if port_info else  'N/A'}")
                          #f"{getattr(port_info, 'country_name', 'N/A')} - "
                          #f"{getattr(port_info, 'locode', 'N/A')}"
@@ -2106,12 +2277,6 @@ class TemplateService:
         fuels, err = await self.sql_db.get_available_fuels()
         #fuel_names = {fuel.id: fuel.name for fuel in fuels} if fuels else {}
 
-
-        # --- Prepare price timeseries safely ---
-        prices_timeseries = {}
-        if prices:
-            for price in prices:
-                prices_timeseries.setdefault(price.fuelName, []).append(price)
 
         # --- Build dataframe safely ---
         # --- Prepare price timeseries safely ---
@@ -2135,6 +2300,8 @@ class TemplateService:
                         temp_df = temp_df.set_index('date')
                         df = df.merge(temp_df, left_index=True, right_index=True, how='outer')
                     df = df.sort_index()
+                    df = df.groupby(level=0).last()
+                    df = df.ffill()
             except Exception as e:
                 lines.append(f"\n⚠️ Failed to build dataframe: {str(e)}")
 
@@ -2209,7 +2376,7 @@ class TemplateService:
 
             except Exception as e:
                 lines.append(f"\n⚠️ Failed to convert dataframe to markdown: {str(e)}")
-        else:
+        elif port_info is not None:
             lines.append("\n⚠️ No price data available.")
 
 
@@ -2217,15 +2384,15 @@ class TemplateService:
         #indexed = []
         global_counter = 1
         blocks = []
-        # for p in port_alternatives:
-        #     blocks.append(p.format_indexed(global_counter))
-        #     indexed.append(p.to_indexed2(str(global_counter), "orange", "medium", False))
-        #     global_counter += 1
-        #
+        for p in port_alternatives:
+            blocks.append(p.format_indexed(global_counter))
+            #indexed.append(p.to_indexed2(str(global_counter), "orange", "medium", False))
+            global_counter += 1
+
         # images_new = await self.map_image_api.render_map_images([], indexed, True)
         # images.extend([MediaImage(content=c) for c in images_new])
 
-        header = "\n".join(lines) + f"\n\n{emogye.THIS}  <b> Enter new port name if needed. </b> " + "\n\nName similar:\n"
+        header = "\n".join(lines) + f"\n\n{emoji.THIS}  <b> Enter port name. </b> " + "\n\nName similar:\n"
         first_limit = self.MAX_MSG_LEN - len(header)
         responses = []
         first_blocks = self.split_blocks(blocks, first_limit)
@@ -2244,7 +2411,8 @@ class TemplateService:
             responses.append(ResponsePayload(text=chunk))
 
         responses[-1].text += "\nNavigation:\n- menu - Main menu"
-        responses[-1].keyboard = self.navigation_handler.get_to_main_menu_keyboard(session)
+        responses[-1].text += "\n- supplier quote - Get supplier quote"
+        responses[-1].keyboard = self.navigation_handler.get_from_port_price_to_main_menu_keyboard(session)
 
         return ResponsePayloadCollection(responses=responses)
 
@@ -2335,56 +2503,83 @@ class TemplateService:
 
         return image_bytes
 
-    async def vessel_info_template(
+    async def user_name_template(
             self,
             session: SessionDB,
-            route: SeaRouteDB,
-            message: Optional[str] = None
-    ) -> ResponsePayloadCollection:
+            message: str = None
+    ):
 
-        if route.vessel_name or route.imo_number:
-            lines = ["\nIs this vessel information correct?\nEnter new vessel name/IMO or confirm.\n"]
-        else:
-            lines = ["\nEnter vessel name and/or IMO number.\n"]
+        lines = []
 
+        lines.append(f"By the way {emoji.SMILE}")
+        lines.append(self._bold("How can I call you here?"))
 
-        lines.extend(
-            [
-                "Examples:",
-                "- vessel Maersk Alabama imo 9321483",
-                "- IMO 9456123",
-                "- vessel name is Aurora",
-                "- update vessel to Ever Given and imo 9811000",
-                "\n",
+        lines.extend([
+            "",
+            self._bold("First name is enough")
+        ])
+
+        if message:
+            lines.extend([
+                "",
+                self._bold("Note:"),
+                message
+            ])
+
+        return ResponsePayloadCollection(
+            responses=[
+                ResponsePayload(
+                    text="\n".join(lines),
+                    keyboard=None
+                )
             ]
         )
 
-        text = "\n".join(lines)
 
-        if message:
-            text += f"Note: {message}\n"
+    async def start_user_email_template(self, session: SessionDB, user: UserDB, note: str = None):
+        l = []
 
-        header_text = await self.get_new_route_header(session, route)
-        navigation_text = self.navigation_handler.get_navigation_text(session)
-        text = header_text + text + navigation_text
+        if user.email:
+            l.append(f"{self._bold('Your email:')} {user.email}")
+            l.append("")
+
+        c = f"{emoji.THIS} Enter your email please. We do not send any kind of spam."
+        if user.email:
+            c = f"{emoji.THIS} Update your email if needed. Still no spam will be sent."
+
+        l.append(self._bold(c))
+
+        l.extend([
+            "",
+            self._bold(f"Examples:"),
+            "- john.doe@example.com",
+            "- ops@company.com",
+            "",
+            self._bold(f"Please make sure the email address is correct."),
+            self._bold(f"Enter yes(y) to get email with pdf file.")
+        ])
+
+        if note:
+            l.append("")
+            l.append(self._bold("Note:"))
+            l.append(note)
+
+        #l.append("")
+        #l.append(nav)
 
         return ResponsePayloadCollection(
-            responses=[ResponsePayload(text=text, keyboard=self.navigation_handler.get_navigation_keyboard(session.current_step))]
+            responses=[
+                ResponsePayload(
+                    text="\n".join(l),
+                    keyboard=self.navigation_handler.get_navigation_keyboard(
+                        session.current_step,
+                        show_yes=bool(user.email),
+                        show_menu=False
+                    )
+                )
+            ]
         )
 
-    async def user_name_template(self, session: SessionDB, message: str = None):
-        lines = [
-            f"By the way {emogye.SMILE}",
-            "How can I call you here?",
-            "",
-            "First name is enough",
-          #  "You can type '-' to skip."
-        ]
-
-        if message:
-            lines.extend(["", "Note:", message])
-
-        return ResponsePayloadCollection(responses=[ResponsePayload(text="\n".join(lines))])
 
     async def vessel_name_template(
             self,
@@ -2400,7 +2595,7 @@ class TemplateService:
             lines.append("\nWaiting for new vessel name...\n")
 
         lines.extend([
-            f"\n{emogye.THIS}  <b> Enter vessel name: </b> " if not route.vessel_name else f"\n {emogye.THIS}  <b> Enter new name or confirm current. </b> ",
+            f"\n{emoji.THIS}  <b> Enter vessel name: </b> " if not route.vessel_name else f"\n {emoji.THIS}  <b> Enter new name or confirm current. </b> ",
             "",
            # "Examples:",
             "Like \"Maersk Alabama\"",
@@ -2421,7 +2616,7 @@ class TemplateService:
         text = header_text + text + navigation_text
 
         return ResponsePayloadCollection(
-            responses=[ResponsePayload(text=text, keyboard=self.navigation_handler.get_navigation_keyboard(session.current_step))]
+            responses=[ResponsePayload(text=text, keyboard=self.navigation_handler.get_navigation_keyboard(session.current_step, show_yes=bool(route.vessel_name)))]
         )
 
 
@@ -2440,7 +2635,7 @@ class TemplateService:
             lines.append("\nWaiting for new IMO number...\n")
 
         lines.extend([
-            f"\n{emogye.THIS}  <b>Enter the IMO number</b>\n<b>(example: 9312345)</b>\n<b>or type yes/y to skip this step. </b> " if not route.imo_number else f"\n{emogye.THIS}  <b>Enter new IMO or yes(y) to confirm</b> ",
+            f"\n{emoji.THIS}  <b>Enter the IMO number</b>\n<b>(example: 9312345)</b>\n<b>or type yes/y to skip this step. </b> " if not route.imo_number else f"\n{emoji.THIS}  <b>Enter new IMO or yes(y) to confirm</b> ",
             ""
         ])
 
@@ -2463,7 +2658,7 @@ class TemplateService:
         text = header_text + text + navigation_text
 
         return ResponsePayloadCollection(
-            responses=[ResponsePayload(text=text,keyboard=self.navigation_handler.get_navigation_keyboard(session.current_step))]
+            responses=[ResponsePayload(text=text,keyboard=self.navigation_handler.get_navigation_keyboard(session.current_step, show_yes=route.vessel_name))]
         )
 
     def format_tariffs_lines(self, tariffs: List[UserTariffBD]) -> List[str]:
@@ -2572,63 +2767,63 @@ class TemplateService:
         # user name
         if user.filled_name:
             required_blocks.append(
-                f"{emogye.CHECK_GREEN_BACKGROUND} Your name: {user.filled_name}"
+                f"{emoji.CHECK_GREEN_BACKGROUND} Your name: {user.filled_name}"
             )
         else:
             required_blocks.append(
-                f"{emogye.CROSS_RED} Your name: _not provided_"
+                f"{emoji.CROSS_RED} Your name: _not provided_"
             )
 
         # Company name
         if user.company_name:
             required_blocks.append(
-                f"{emogye.CHECK_GREEN_BACKGROUND} Company name: {user.company_name}"
+                f"{emoji.CHECK_GREEN_BACKGROUND} Company name: {user.company_name}"
             )
         else:
             required_blocks.append(
-                f"{emogye.CROSS_RED} Company name: _not provided_"
+                f"{emoji.CROSS_RED} Company name: _not provided_"
             )
 
         # Email
         if user.email:
             required_blocks.append(
-                f"{emogye.CHECK_GREEN_BACKGROUND} Email: {user.email}"
+                f"{emoji.CHECK_GREEN_BACKGROUND} Email: {user.email}"
             )
         else:
             required_blocks.append(
-                f"{emogye.CROSS_RED} Email: _not provided_"
+                f"{emoji.CROSS_RED} Email: _not provided_"
             )
 
         # Phone number
         if user.phone_number:
             required_blocks.append(
-                f"{emogye.CHECK_GREEN_BACKGROUND} Mobile phone: {user.phone_number}"
+                f"{emoji.CHECK_GREEN_BACKGROUND} Mobile phone: {user.phone_number}"
             )
         else:
             required_blocks.append(
-                f"{emogye.CROSS_RED} Mobile phone: _not provided_"
+                f"{emoji.CROSS_RED} Mobile phone: _not provided_"
             )
 
         # Chosen tariff
         chosen_tariff = session.data.tariff_selection.chosen_tariff
         if chosen_tariff:
             required_blocks.append(
-                f"{emogye.CHECK_GREEN_BACKGROUND} Selected tariff: {chosen_tariff}"
+                f"{emoji.CHECK_GREEN_BACKGROUND} Selected tariff: {chosen_tariff}"
             )
         else:
             required_blocks.append(
-                f"{emogye.CROSS_RED} Selected tariff: _not selected_"
+                f"{emoji.CROSS_RED} Selected tariff: _not selected_"
             )
 
         # Optional user message
         user_message = session.data.tariff_selection.user_message
         if user_message:
             required_blocks.append(
-                f"{emogye.CHECK_GREEN_BACKGROUND} Message / comment: \n {user_message}"
+                f"{emoji.CHECK_GREEN_BACKGROUND} Message / comment: \n {user_message}"
             )
         else:
             required_blocks.append(
-                f"{emogye.INFO} Message / comment: _optional_"
+                f"{emoji.INFO} Message / comment: _optional_"
             )
 
         required_blocks.append("")
@@ -3030,39 +3225,59 @@ class TemplateService:
 
         return ResponsePayloadCollection(responses=[ResponsePayload(text=text)])
 
-    async def new_start_template(self, session: SessionDB, message: str = None, is_admin: bool = False):
-        lines = [
-            f"{emogye.THIS}  <b> To tailor the results for you, please share your role to https://thebunkering.com/.</b> ",
-        ]
+    async def new_start_template(
+            self,
+            session: SessionDB,
+            message: str = None,
+            is_admin: bool = False
+    ):
 
         user, err = await self.sql_db.get_user_by_id(session.user_id)
-        if err:
-            lines.extend([
-                "\n",
-                " <b> Could not find the user. Try again please. </b> "
-            ])
+
+        lines = [
+            f"{emoji.THIS} {self._bold('To tailor the results for you, please select your role.')}",
+            ""
+        ]
+
+        if err or not user:
+            lines.append(self._bold("Could not find user. Please try again."))
         else:
+            if user.role:
+                current = next(
+                    (k for k, v in ROLE_MAP.items() if v == user.role),
+                    user.role
+                )
+                lines.append(f"{self._bold('Selected role:')} {current}")
+                lines.append("")
+            else:
+                lines.append(self._bold("Please choose a role using numbers (1–6)."))
+                lines.append("")
+
+        if message:
             lines.extend([
-                #"\nCurrently selected role: " + user.role if user.role else "not selected",
-                #"After role selected, please text \"fine\" or \"next\""
-                f"\n{emogye.THIS}  <b> Please enter a number from the menu (e.g. 1, 2, 3). </b> "
+                self._bold("Note:"),
+                message,
+                ""
             ])
-
-        # if message:
-        #     lines.extend(["\nNote: ", message])
-
 
         lines.extend([
-            "\nOptions:",
-            f"1. Ship owner {emogye.SHIP}",
-            f"2. Ship operator {emogye.OPERATOR}",
-            f"3. Fleet / Voyage manager {emogye.COMPASS}",
-            f"4. Bunker trader / Supplier {emogye.OIL_DUM}",
-            f"5. Charterer {emogye.STATS}",
-            f"6. Technical / Other {emogye.MECHANICAL_KEY}"
+            self._bold("Options:"),
+            f"1. Ship owner {emoji.SHIP}",
+            f"2. Ship operator {emoji.OPERATOR}",
+            f"3. Fleet / Voyage manager {emoji.COMPASS}",
+            f"4. Bunker trader / Supplier {emoji.OIL_DUM}",
+            f"5. Charterer {emoji.STATS}",
+            f"6. Technical / Other {emoji.MECHANICAL_KEY}",
         ])
 
-        return ResponsePayloadCollection(responses=[ResponsePayload(text="\n".join(lines), keyboard=self.navigation_handler.get_role_choice_keyboard())])
+        return ResponsePayloadCollection(
+            responses=[
+                ResponsePayload(
+                    text="\n".join(lines),
+                    keyboard=self.navigation_handler.get_role_choice_keyboard()
+                )
+            ]
+        )
 
     async def pdf_request_template(
             self,
@@ -3073,7 +3288,7 @@ class TemplateService:
         """Template for PDF request confirmation step"""
 
         lines = [
-            f"\nI can send you a PDF with the full breakdown {emogye.SMILE}",
+            f"\nI can send the bunkering request with full breakdown if needed {emoji.SMILE}.",
             "",
             "It will include:",
             "- Route details",
@@ -3081,7 +3296,7 @@ class TemplateService:
             "- Bunkering ports",
             "- Totals",
             "",
-            f"{emogye.THIS}  <b> Want me to do it? Yes(y)/No(n) </b> ",
+            f"{emoji.THIS}  <b> Want me to do it? Yes(y)/No(n) </b> ",
         ]
 
         text = "\n".join(lines)
@@ -3130,7 +3345,7 @@ class TemplateService:
                 "- john.doe@example.com",
                 "- ops@company.com",
                 "",
-                f"Please make sure the email address is correct.\n{emogye.THIS}  <b> Enter yes(y) to get email.</b> "
+                f"Please make sure the email address is correct.\n{emoji.THIS}  <b> Enter yes(y) to get email with pdf file.</b> "
             ]
 
             text = "\n".join(lines)
@@ -3140,12 +3355,12 @@ class TemplateService:
 
             text = text + navigation_text
             # responses[-1].keyboard = self.navigation_handler.get_navigation_keyboard(session)
-            responses.append(ResponsePayload(text=text, keyboard=self.navigation_handler.get_navigation_keyboard(session.current_step)))
+            responses.append(ResponsePayload(text=text, keyboard=self.navigation_handler.get_navigation_keyboard(session.current_step, show_yes=str(user_db.email))))
 
         else:
             # MESSAGE 1 — GENERATING
             text_1 = "\n".join([
-                f"\nGreat {emogye.FINE}",
+                f"\nGreat {emoji.FINE}",
                 "",
                 "Generating the PDF now…"
             ])
@@ -3181,7 +3396,7 @@ class TemplateService:
     #     """Template shown after request is submitted to suppliers"""
     #
     #     lines = [
-    #         f"\nThanks {emogye.FINE}",
+    #         f"\nThanks {emoji.FINE}",
     #         "",
     #         "I’ve got everything I need for now.",
     #         "I’ll submit the request to suppliers",
@@ -3230,9 +3445,9 @@ class TemplateService:
         # Map image
         indexed = []
         if departure:
-            indexed.append(departure.to_indexed2(emogye.ARROW_UP, "green", "medium", True))
+            indexed.append(departure.to_indexed2(emoji.ARROW_UP, "green", "medium", True))
         if destination:
-            indexed.append(destination.to_indexed2(emogye.ARROW_DOWN, "red", "medium", True))
+            indexed.append(destination.to_indexed2(emoji.ARROW_DOWN, "red", "medium", True))
         for step in steps:
             if not step.selected:
                 continue
@@ -3294,11 +3509,11 @@ class TemplateService:
             p = step.port
             dm = self.render_delivery_basis(p)
             if not len(dm) > 0 or dm != "":
-                dm = emogye.LINE
+                dm = emoji.LINE
             row = {
                 "Port": p.format_port().replace("\n", ""),
-                "ETA": step.eta_datetime.strftime("%B %d, %Y") if step.eta_datetime else emogye.LINE,
-                "Port info": p.agent_contact_list or emogye.LINE,
+                "ETA": step.eta_datetime.strftime("%B %d, %Y") if step.eta_datetime else emoji.LINE,
+                "Port info": p.agent_contact_list or emoji.LINE,
                 "Fuel delivery method": dm
             }
 
@@ -3356,6 +3571,215 @@ class TemplateService:
         file_obj = MediaFile(filename=file_name, content=html_content_bytes)
         return  html_content, html_content_bytes, file_obj, subject, images, image_data if not image_err else b''
 
+    async def render_supplier_request(
+            self,
+            user,
+            quote_request: QuoteRequestDB,
+            prices: List[MabuxPortFuelPriceDB]
+    ) -> Tuple[str, bytes, object, str, List[str], Optional[bytes]]:
+
+        # Get port information if port_id exists
+        port = None
+        if quote_request.port_id:
+            port, _ = await self.sql_db.get_port_by_id(quote_request.port_id)
+
+        # Map image
+        indexed = []
+        if port:
+            indexed.append(port.to_indexed2(emoji.ANCHOR, "green", "medium", True))
+
+        image_data, image_err = await self.map_image_api.render_map([], indexed)
+        map_link = "https://www.britannica.com/science/world-map"  # map_image_api.get_route_map_link(str(quote_request.id))
+
+        if image_data and not image_err:
+            # Check if it's already base64 string
+            if isinstance(image_data, str) and image_data.startswith('data:image'):
+                # Already base64
+                image_data = image_data.split(',')[1] if ',' in image_data else image_data
+            elif isinstance(image_data, bytes):
+                # Convert PNG bytes to base64
+                image_data = base64.b64encode(image_data).decode('utf-8')
+            else:
+                print(f"Unexpected image data type: {type(image_data)}")
+
+        prices_timeseries = {}
+        if prices:
+            for price in prices:
+                prices_timeseries.setdefault(price.fuelName, []).append(price)
+
+        # --- Build dataframe safely ---
+        df = pd.DataFrame()
+        if prices_timeseries:
+            try:
+                df_list = []
+                for fuel, recs in prices_timeseries.items():
+                    if recs:
+                        df_list.append(pd.DataFrame([{"date": getattr(r, "date", None), fuel: getattr(r, "value", None)} for r in recs]))
+                if df_list:
+                    # Use merge instead of concat+groupby to get proper wide format
+                    df = df_list[0].set_index('date')
+                    for temp_df in df_list[1:]:
+                        temp_df = temp_df.set_index('date')
+                        df = df.merge(temp_df, left_index=True, right_index=True, how='outer')
+                    df = df.sort_index()
+                    df = df.groupby(level=0).last()
+                    df = df.ffill()
+            except Exception as e:
+                #lines.append(f"\n⚠️ Failed to build dataframe: {str(e)}")
+                pass
+
+        prices_image_bytes = None
+        if not df.empty:
+            # Store the original index labels for x-axis
+            original_index_labels = [i.strftime("%b, %d %Y") for i in df.index]
+
+            # Reset index to numeric but keep it for plotting
+            df_numeric = df.reset_index(drop=True)  # This creates 0,1,2,... index
+
+            try:
+                fig, ax = plt.subplots(figsize=(14, 7))
+
+                # Plot using numeric index (0, 1, 2, ...)
+                for fuel in df_numeric.columns:
+                    ax.plot(df_numeric.index, df_numeric[fuel], marker="o", linewidth=2, label=fuel)
+
+                    # Add data labels
+                    for x, y in zip(df_numeric.index, df_numeric[fuel]):
+                        if pd.notna(y):
+                            ax.text(x, y, f"{y:.0f}", fontsize=12, ha="center", va="bottom")
+
+                ax.set_ylabel("Price, $/mton")
+                ax.set_title("Fuel Cost Timeseries, $/mton")
+                ax.grid(True, linestyle="--", alpha=0.6)
+                ax.legend()
+
+                # Set x-axis ticks and labels
+                ax.set_xticks(df_numeric.index)  # Set numeric positions
+                ax.set_xticklabels(original_index_labels)  # Set original date labels
+
+                # Rotate x-axis labels for better readability
+                plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
+
+                plt.tight_layout()
+
+                buf = io.BytesIO()
+                fig.savefig(buf, format='png', dpi=300)
+                buf.seek(0)
+                prices_image_bytes = buf.getvalue()
+                buf.close()
+                plt.close(fig)
+            except Exception as e:
+                #lines.append(f"\n⚠️ Failed to generate plot: {str(e)}")
+                pass
+
+            if prices_image_bytes:
+                prices_image_bytes = base64.b64encode(prices_image_bytes).decode('utf-8')
+
+        # Format ETA if exists
+        eta_from_formatted = None
+        if quote_request.eta_from:
+            eta_from_formatted = quote_request.eta_from.strftime("%b %d, %Y")
+
+        eta_to_formatted = None
+        if quote_request.eta_from:
+            eta_to_formatted = quote_request.eta_to.strftime("%b %d, %Y")
+
+        # Prepare status for display and CSS class
+        status_map = {
+            "pending": {"display": "Pending", "class": "pending"},
+            "requested": {"display": "Quote Requested", "class": "requested"},
+            "quoted": {"display": "Quotes Received", "class": "completed"},
+            "completed": {"display": "Completed", "class": "completed"},
+            "cancelled": {"display": "Cancelled", "class": "cancelled"},
+        }
+
+        status_info = status_map.get(
+            quote_request.status.lower(),
+            {"display": quote_request.status, "class": "pending"}
+        )
+
+        # Prepare fuels data with specifications
+        fuels_data = []
+        total_cost = 0
+
+        for f in quote_request.fuels:
+            qty = f.quantity or 0
+            price = f.price or 0
+            cost = qty * price
+
+            total_cost += cost
+
+            fuels_data.append({
+                "fuel_name": f.fuel_name,
+                "quantity": qty,
+                "price": price,
+                "cost": cost
+            })
+
+        # Create email subject
+        subject_parts = []
+        if user and (user.first_name or user.last_name):
+            subject_parts.append(f"{user.first_name or ''} {user.last_name or ''}".strip())
+        if user and user.telegram_user_name:
+            subject_parts.append(f"@{user.telegram_user_name}")
+        if quote_request.vessel_name:
+            subject_parts.append(f"- {quote_request.vessel_name}")
+
+        base_subject = " ".join(subject_parts) if subject_parts else "Bunkering Bot"
+        subject = f"⚓ FUEL QUOTE REQUEST: {base_subject}"
+
+        # Get the Jinja2 template
+        template = env.get_template("supplier_request.html")  # Make sure this template exists
+
+        # Render the template
+        html_content = template.render(
+            request_id=quote_request.id,
+            generation_date=datetime.now().strftime("%d %B %Y"),
+            total_cost=total_cost,
+            user=user,
+            company_name=quote_request.company_name,
+            vessel_name=quote_request.vessel_name,
+            vessel_imo=quote_request.vessel_imo,
+            eta_from=eta_from_formatted,
+            eta_to=eta_to_formatted,
+            port=port,
+            fuels=fuels_data,
+            remark=quote_request.remark,
+            image=image_data,
+            map_link=map_link,
+            prices_image_bytes=prices_image_bytes
+        )
+
+        # Generate PDF
+        html_content_bytes = self.html_to_pdf(html_content)
+
+        # Create filename
+        filename_parts = []
+        if port:
+            filename_parts.append(port.port_name.replace(" ", "_"))
+        if quote_request.vessel_name:
+            filename_parts.append(quote_request.vessel_name.replace(" ", "_"))
+        filename_parts.append("Quote_Request")
+        if quote_request.eta_from:
+            filename_parts.append(quote_request.eta_from.strftime("%Y%m%d"))
+
+        if quote_request.eta_to:
+            filename_parts.append("")
+            filename_parts.append(quote_request.eta_to.strftime("%Y%m%d"))
+
+
+        filename = "_".join(filename_parts) if filename_parts else "Quote_Request"
+
+        # Create MediaFile object
+        # Adjust import as needed
+        file_obj = MediaFile(
+            filename=filename,
+            content=html_content_bytes,
+        )
+
+        # Return compatibility values (empty images list, no image data)
+        return html_content, html_content_bytes, file_obj, subject, [], None
+
     async def supplier_prices_template(
             self,
             session,
@@ -3370,10 +3794,10 @@ class TemplateService:
         keyboard = None
 
         if not status:
-            text += f"\n\nI can request live supplier prices — free and with no obligation.\n{emogye.THIS}  <b> Want me to do that? (Yes/No). </b> "
+            text += f"\n\nI can request live supplier prices — free and with no obligation.\n{emoji.THIS}  <b> Want me to do that? (Yes/No). </b> "
             keyboard = self.navigation_handler.get_yes_no_back_keyboard()
         else:
-            text += f"\n\nPerfect {emogye.FINE}\nI’ll reach out to suppliers and get back to you with live quotes.\nMight need a couple of quick details along the way."
+            text += f"\n\nPerfect {emoji.FINE}\nI’ll reach out to suppliers and get back to you with live quotes.\nMight need a couple of quick details along the way."
 
         if message:
             text += "\n" + message
@@ -3385,17 +3809,17 @@ class TemplateService:
 
         if route.data.quote_requested:
             lines.extend([
-                f"{emogye.FINE} The request was sent!",
+                f"{emoji.FINE} The request was sent!",
                 "",
-                f"{emogye.OIL_STATION}  <b> Supplier requests will help confirm real prices and availability </b> ",
+                f"{emoji.OIL_STATION}  <b> Supplier requests will help confirm real prices and availability </b> ",
                 "for your route."
             ])
 
         else:
             lines.extend([
-                f"{emogye.FINE} No problem — the request was not sent.",
+                f"{emoji.FINE} No problem — the request was not sent.",
                 "",
-                f"{emogye.OIL_STATION}  <b> Supplier requests help confirm real prices and availability </b> ",
+                f"{emoji.OIL_STATION}  <b> Supplier requests help confirm real prices and availability </b> ",
                 "for your route."
             ])
 
@@ -3413,7 +3837,7 @@ class TemplateService:
         responses = []
 
         lines = [
-            f"Quick check {emogye.SMILE}",
+            f"Quick check {emoji.SMILE}",
             "What company name should I use for the supplier request?" if not company_name else f"Is company name \"{company_name}\" correct? \n <b> Enter new to update. </b> "
         ]
 
@@ -3424,14 +3848,62 @@ class TemplateService:
 
         text = text + navigation_text
 
-        responses.append(ResponsePayload(text=text, keyboard=self.navigation_handler.get_navigation_keyboard(session)))
+        responses.append(ResponsePayload(text=text, keyboard=self.navigation_handler.get_navigation_keyboard(session, show_yes=bool(user_db.company_name))))
 
         return ResponsePayloadCollection(responses=responses)
+
+    async def start_company_name_template(
+            self,
+            session: SessionDB,
+            user: UserDB,
+            note: str = None
+    ):
+        lines = []
+
+        if user.company_name:
+            lines.append(f"{self._bold('Your company:')} {user.company_name}")
+            lines.append("")
+
+        c = f"{emoji.THIS} Enter your company name."
+        if user.company_name:
+            c = f"{emoji.THIS} Update your company name if needed."
+
+        lines.append(self._bold(c))
+
+        lines.extend([
+            "",
+            self._bold("Examples:"),
+            "- Maersk",
+            "- Shell Trading",
+            "- BP Oil International",
+            "",
+            self._bold("Use official company name if possible.")
+        ])
+
+        if note:
+            lines.extend([
+                "",
+                self._bold("Note:"),
+                note
+            ])
+
+        return ResponsePayloadCollection(
+            responses=[
+                ResponsePayload(
+                    text="\n".join(lines),
+                    keyboard=self.navigation_handler.get_navigation_keyboard(
+                        session.current_step,
+                        show_yes=bool(user.company_name),
+                        show_menu=False
+                    )
+                )
+            ]
+        )
 
 
     def new_route_finish(self, route: SeaRouteDB):
         l = [
-            f"Thanks {emogye.FINE}",
+            f"Thanks {emoji.FINE}",
             "",
             "I’ve got everything I need for now.",
             "I’ll submit the request to suppliers \nand get back to you as soon as quotes are in.\n" if route.data.pdf_requested else "",
@@ -3475,4 +3947,901 @@ class TemplateService:
             ]
         )
 
+    async def route_research_template(
+            self,
+            session: Optional[SessionDB] = None,
+            note: Optional[str] = None
+    ):
 
+        lines = []
+
+        lines.append("What exactly do you want to do?")
+        lines.append("")
+
+        lines.append(self._bold("Enter 1 to create a new route"))
+        lines.append(self._bold("or 2 to see already created routes"))
+
+        if note:
+            lines.append("")
+            lines.append(self._bold("Note:"))
+            lines.append(note)
+
+        lines.extend([
+            "",
+            self._bold("Navigation:"),
+            "- back - to main menu"
+        ])
+
+        return ResponsePayloadCollection(
+            responses=[
+                ResponsePayload(
+                    text="\n".join(lines),
+                    keyboard=self.navigation_handler.get_one_two_back()
+                )
+            ]
+        )
+
+    async def quote_research_template(
+            self,
+            session: Optional[SessionDB] = None,
+            note: Optional[str] = None
+    ):
+
+        lines = []
+
+        lines.append("What exactly do you want to do?")
+        lines.append("")
+
+        lines.append(self._bold(f"{emoji.THIS} Enter 1 to create a new quote request"))
+        lines.append(self._bold("or 2 to see already created quote requests"))
+
+        if note:
+            lines.append("")
+            lines.append(self._bold("Note:"))
+            lines.append(note)
+
+        lines.extend([
+            "",
+            self._bold("Navigation:"),
+            "- back - to main menu"
+        ])
+
+        return ResponsePayloadCollection(
+            responses=[
+                ResponsePayload(
+                    text="\n".join(lines),
+                    keyboard=self.navigation_handler.get_one_two_back_quote()
+                )
+            ]
+        )
+
+    async def quote_vessel_name(
+            self,
+            session: SessionDB,
+            quote_r: QuoteRequestDB,
+            note: Optional[str] = None
+    ):
+
+        header = await self.get_quote_request_header(session, quote_r)
+        nav = self.navigation_handler.get_navigation_text(session)
+
+        lines = [header, ""]
+
+        if quote_r.vessel_name:
+            title = "Update vessel name if needed."
+        else:
+            title = "Enter vessel name."
+
+        lines.append(f"{emoji.THIS} {self._bold(title)}")
+
+        # if quote_r.vessel_name:
+        #     lines.append("")
+        #     lines.append(self._bold("Current vessel name:"))
+        #     lines.append(f"{quote_r.vessel_name}")
+
+        if note:
+            lines.append("")
+            lines.append(self._bold("Note:"))
+            lines.append(note)
+
+        lines.append("")
+        lines.append(nav)
+
+        return ResponsePayloadCollection(
+            responses=[
+                ResponsePayload(
+                    text="\n".join(lines),
+                    keyboard=self.navigation_handler.get_navigation_keyboard(
+                        session.current_step,
+                        show_yes=bool(quote_r.vessel_name)
+                    )
+                )
+            ]
+        )
+
+    async def quote_vessel_imo(
+            self,
+            session: SessionDB,
+            quote_r: QuoteRequestDB,
+            note: Optional[str] = None
+    ):
+
+        header = await self.get_quote_request_header(session, quote_r)
+        nav = self.navigation_handler.get_navigation_text(session)
+
+        lines = [header, ""]
+
+        if quote_r.vessel_imo:
+            title = "Update vessel IMO if needed."
+        else:
+            title = "Enter vessel IMO."
+
+        lines.append(self._bold(title))
+
+        # if quote_r.vessel_imo:
+        #     lines.append("")
+        #     lines.append(self._bold("Current vessel IMO:"))
+        #     lines.append(f"<b>{quote_r.vessel_imo}</b>")
+
+        if note:
+            lines.append("")
+            lines.append(self._bold("Note:"))
+            lines.append(note)
+
+        lines.append("")
+        lines.append(nav)
+
+        return ResponsePayloadCollection(
+            responses=[
+                ResponsePayload(
+                    text="\n".join(lines),
+                    keyboard=self.navigation_handler.get_navigation_keyboard(
+                        session.current_step,
+                        show_yes=bool(quote_r.vessel_imo)
+                    )
+                )
+            ]
+        )
+
+    async def quote_port_search(
+            self,
+            session: SessionDB,
+            quote_r: QuoteRequestDB,
+            note: Optional[str] = None
+    ):
+
+        candidate = quote_r.data.port_search.port
+        suggestions = quote_r.data.port_search.ports or []
+
+        header = await self.get_quote_request_header(session, quote_r)
+        nav = self.navigation_handler.get_navigation_text(session)
+
+        lines = [header, ""]
+
+        if candidate:
+            lines.append(f"{emoji.THIS} {self._bold('Type yes (y) to confirm if port is correct')}")
+            lines.append(f"   {self._bold('Or enter a new port name')}")
+            lines.append(f"   {self._bold('Or choose from the list (e.g. 1, 2, 3)')}")
+        else:
+            lines.append(f"{emoji.THIS} {self._bold('Port for bunkering?')}")
+
+        lines.append("")
+
+        if note:
+            lines.append(self._bold("Note:"))
+            lines.append(note)
+            lines.append("")
+
+        lines.append(nav)
+
+        images = []
+        indexed = []
+
+        port_arrow = emoji.QUESTION
+        port_color = "purple"
+
+        if candidate:
+            indexed.append(candidate.to_indexed2(port_arrow, port_color, "medium", True))
+
+        for i, port in enumerate(suggestions, 1):
+            indexed.append(port.to_indexed2(str(i), "orange", "medium", False))
+
+        images_generated = await self.map_image_api.render_map_images([], indexed, True)
+        images.extend([MediaImage(content=content) for content in images_generated])
+
+        return ResponsePayloadCollection(
+            responses=[
+                ResponsePayload(
+                    text="\n".join(lines),
+                    images=images,
+                    keyboard=self.navigation_handler.get_navigation_keyboard(
+                        session.current_step,
+                        show_yes=bool(quote_r.port_id)
+                    )
+                )
+            ]
+        )
+
+    # async def quote_eta(self, session: SessionDB, quote_r: QuoteRequestDB, note: Optional[str] = None):
+    #     l = []
+    #
+    #     header = await self.get_quote_request_header(session, quote_r)
+    #     nav = self.navigation_handler.get_navigation_text(session)
+    #     l.extend([
+    #         header,
+    #         " ",
+    #         "<b>Enter ETA.</b>",
+    #         "",
+    #         self._bold("Examples:"),
+    #         "  15 Jan 2025",
+    #         "  15 Jan",
+    #         "  Jan 15",
+    #         f"<b>Note:</b>\n{note}" if note else "",
+    #         nav
+    #
+    #     ])
+    #     return ResponsePayloadCollection(
+    #         responses=[
+    #             ResponsePayload(text="\n".join(l), keyboard=self.navigation_handler.get_navigation_keyboard(session.current_step, show_yes=bool(quote_r.eta)))
+    #         ]
+    #     )
+    #
+
+
+    async def quote_fuels(self, session: SessionDB, quote_r: QuoteRequestDB,  note: Optional[str] = None):
+        l = []
+
+        header = await self.get_quote_request_header(session, quote_r)
+        nav = self.navigation_handler.get_navigation_text(session)
+
+        l.extend([
+            header,
+            " ",
+            "<b>Enter FUEL quantity per its name.</b>",
+            "<b>fuel_number fuel_quantity </b>"
+            "<b>separate fuels with / </b>",
+            "<b>Example: 1 21 / 2 32 / 3 43 "
+            f"\n<b>Note:</b>\n{note}" if note else "",
+            nav
+
+        ])
+
+        available_fuels = []
+
+        f, err = await self.sql_db.get_fuel_by_name("VLS FO")
+        if not err and f:
+            available_fuels.append(f)
+
+        f, err = await self.sql_db.get_fuel_by_name("MGO LS")
+        if not err and f:
+            available_fuels.append(f)
+
+        user_fuel_names = set([f.fuel_name for f in quote_r.fuels])
+
+        for i, fuel in enumerate(available_fuels, 1):
+            postfix = emoji.CHECK_GRAY if fuel.name in user_fuel_names else ""
+            l.append(f"{i}. {fuel.name} {postfix}")
+
+
+        return ResponsePayloadCollection(
+            responses=[
+                ResponsePayload(text="\n".join(l), keyboard=self.navigation_handler.get_navigation_keyboard(session.current_step, show_yes=bool(len(quote_r.fuels) > 0)))
+            ]
+        )
+
+    async def quote_fuel_quantity(
+            self,
+            session: SessionDB,
+            quote_r: QuoteRequestDB,
+            note: Optional[str] = None
+    ):
+
+        header = await self.get_quote_request_header(session, quote_r)
+        nav = self.navigation_handler.get_navigation_text(session)
+
+        lines = [header, ""]
+
+        if all(f.quantity == 0 for f in quote_r.fuels):
+            title = "Enter fuel quantity per each fuel you need."
+        else:
+            title = "Update the fuel quantity if needed."
+
+        lines.extend([
+            self._bold(title),
+            self._bold('To confirm, enter "yes (y)"'),
+            "",
+            self._bold("Example:"),
+            "1 100 / 2 250 / 3 550",
+            ""
+        ])
+
+        available_fuels: list = []
+
+        vls_fo, err = await self.sql_db.get_fuel_by_name("VLS FO")
+        if not err and vls_fo:
+            available_fuels.append(vls_fo)
+
+        mgo_ls, err = await self.sql_db.get_fuel_by_name("MGO LS")
+        if not err and mgo_ls:
+            available_fuels.append(mgo_ls)
+
+        user_fuels = {f.fuel_name: f for f in quote_r.fuels}
+
+        if not available_fuels:
+            lines.append(self._bold("No fuels available. Please contact the administrator."))
+        else:
+            lines.append(self._bold("Available fuels:"))
+
+        for i, fuel in enumerate(available_fuels, 1):
+
+            price = "-"
+            quantity = "-"
+            total = "-"
+            postfix = ""
+
+            fuel_data = user_fuels.get(fuel.name)
+
+            if fuel_data:
+
+                if fuel_data.price is not None:
+                    price = fuel_data.price
+
+                if fuel_data.quantity is not None:
+                    quantity = fuel_data.quantity
+
+                if fuel_data.price is not None and fuel_data.quantity is not None:
+                    total = fuel_data.price * fuel_data.quantity
+
+                if fuel_data.quantity and fuel_data.quantity > 0:
+                    postfix = emoji.CHECK_GRAY
+
+            lines.append(
+                f"{i}. {fuel.name} for ${price} of {quantity} will be ${total} {postfix}"
+            )
+
+        if note:
+            lines.extend([
+                "",
+                self._bold("Note:"),
+                note
+            ])
+
+        lines.append(nav)
+
+        return ResponsePayloadCollection(
+            responses=[
+                ResponsePayload(
+                    text="\n".join(lines),
+                    keyboard=self.navigation_handler.get_navigation_keyboard(
+                        session.current_step,
+                        show_yes=bool(quote_r.fuels)
+                    )
+                )
+            ]
+        )
+
+    async def quote_eta(
+            self,
+            session,
+            quote_r,
+            note: Optional[str] = None
+    ):
+
+        header = await self.get_quote_request_header(session, quote_r)
+        nav = self.navigation_handler.get_navigation_text(session)
+
+        lines = [header, ""]
+
+        if not quote_r.eta_from or not quote_r.eta_to:
+            lines.append(self._bold(f"{emoji.THIS} Enter Vessel ETA date range."))
+        else:
+            lines.append(self._bold(f"{emoji.THIS} Update Vessel ETA date range."))
+
+        lines.extend([
+            self._bold('To confirm, enter "yes (y)"'),
+            "",
+            self._bold("Examples:"),
+            "Jan 15 - Jan 20",
+            "15 Jan - 20 Jan",
+            "15 Jan 2025 - 20 Jan 2025",
+            "15-01-2025 - 20-01-2025",
+            ""
+        ])
+
+        # if quote_r.eta_from or quote_r.eta_to:
+        #     lines.append(self._bold("Current ETA window:"))
+        #
+        #     if quote_r.eta_from:
+        #         lines.append(
+        #             f"<b>ETA from:</b> {quote_r.eta_from.strftime('%b %d, %Y')}"
+        #         )
+        #
+        #     if quote_r.eta_to:
+        #         lines.append(
+        #             f"<b>ETA to:</b> {quote_r.eta_to.strftime('%b %d, %Y')}"
+        #         )
+        #
+        #     lines.append("")
+
+        if note:
+            lines.append(f"<b>Note:</b>\n{note}")
+
+        lines.append(nav)
+
+        return ResponsePayloadCollection(
+            responses=[
+                ResponsePayload(
+                    text="\n".join(lines),
+                    keyboard=self.navigation_handler.get_navigation_keyboard(
+                        session.current_step,
+                        show_yes=bool(quote_r.eta_from and quote_r.eta_to)
+                    )
+                )
+            ]
+        )
+
+    async def quote_company_name(
+            self,
+            session: SessionDB,
+            quote_r: QuoteRequestDB,
+            note: Optional[str] = None
+    ):
+
+        header = await self.get_quote_request_header(session, quote_r)
+        nav = self.navigation_handler.get_navigation_text(session)
+
+        lines = [header, ""]
+
+        if quote_r.company_name:
+            title = f"{emoji.THIS} Update company name if needed."
+        else:
+            title = f"{emoji.THIS} Enter your company name."
+
+        lines.append(self._bold(title))
+
+        lines.extend([
+            self._bold('To confirm, enter "yes (y)"'),
+            "",
+            self._bold("Example:"),
+            "Maersk Tankers",
+            ""
+        ])
+
+        # if quote_r.company_name:
+        #     lines.append(self._bold("Current company name:"))
+        #     lines.append(f"<b>{quote_r.company_name}</b>")
+        #     lines.append("")
+
+        if note:
+            lines.append(f"<b>Note:</b>\n{note}")
+
+        lines.append(nav)
+
+        return ResponsePayloadCollection(
+            responses=[
+                ResponsePayload(
+                    text="\n".join(lines),
+                    keyboard=self.navigation_handler.get_navigation_keyboard(
+                        session.current_step,
+                        show_yes=bool(quote_r.company_name)
+                    )
+                )
+            ]
+        )
+
+
+    async def quote_remarks(self, session: SessionDB, quote_r: QuoteRequestDB, note: Optional[str] = None):
+        header = await self.get_quote_request_header(session, quote_r)
+        nav = self.navigation_handler.get_navigation_text(session)
+
+        c = f"{emoji.THIS} Enter remark about current supplier request."
+        if len(quote_r.remark):
+            c = f"{emoji.THIS} Update supplier request remark if needed."
+
+        l = [header, " ", self._bold(c)]
+
+        l.append(nav)
+
+        return ResponsePayloadCollection(
+            responses=[
+                ResponsePayload(text="\n".join(l), keyboard=self.navigation_handler.get_navigation_keyboard(session.current_step, show_yes=True))
+            ]
+        )
+
+    async def quote_another_quote_request(self, session: SessionDB, quote_r: QuoteRequestDB, note: Optional[str] = None):
+        l = []
+
+        header = await self.get_quote_request_header(session, quote_r)
+        nav = self.navigation_handler.get_navigation_text(session)
+
+        l.extend([
+            header,
+            " ",
+            self._bold("Do you want to create another supplier request?"),
+        ])
+
+        if note:
+            l.extend([
+                self._bold("Note:"),
+                note
+            ])
+
+        l.append(nav)
+
+        return ResponsePayloadCollection(
+            responses=[
+                ResponsePayload(text="\n".join(l), keyboard=self.navigation_handler.get_navigation_keyboard(session.current_step, show_yes=True))
+            ]
+        )
+
+    async def quote_user_email(self, session: SessionDB, quote_r: QuoteRequestDB, status: bool = False, message: Optional[str] = None):
+        user_email = None
+        user_db, err = await self.sql_db.get_user_by_id(uuid.UUID(quote_r.user_id))
+        if not err and user_db:
+            user_email = user_db.email
+
+        navigation_text = self.navigation_handler.get_navigation_text(session)
+        responses = []
+
+        if not status:
+            lines = [
+                "\nGot it 🙂",
+                "",
+                "What email should I send the PDF to?" if not user_email else f"Your email is: {user_email}. Update if you want.",
+                "",
+                "Examples:",
+                "- john.doe@example.com",
+                "- ops@company.com",
+                "",
+                f"Please make sure the email address is correct.\n{emoji.THIS}  <b> {emoji.THIS} Enter yes(y) to get email with pdf-file.</b> "
+            ]
+
+            text = "\n".join(lines)
+
+            if message is not None:
+                text += f"\n\nNote: {message}\n"
+
+            text = text + navigation_text
+            responses.append(ResponsePayload(text=text, keyboard=self.navigation_handler.get_navigation_keyboard(session.current_step, show_yes=user_db.email is not None)))
+
+        else:
+            # MESSAGE 1 — GENERATING
+            text_1 = "\n".join([
+                f"\nGreat {emoji.FINE}",
+                "",
+                "Generating the PDF now…"
+            ])
+            text_1 = text_1  # + navigation_text
+
+            responses.append(ResponsePayload(text=text_1))
+
+            # MESSAGE 2 — DONE
+            lines_2 = [
+                "\nDone 🙂",
+                "",
+                "The Bunker request has been sent to reliable suppliers of chosen port. Bunker offers coming maximum within 30 minutes."
+            ]
+
+            text_2 = "\n".join(lines_2)
+            text_2 = text_2  # + navigation_text
+
+            responses.append(ResponsePayload(text=text_2))
+
+        return ResponsePayloadCollection(responses=responses)
+
+    async def user_promocode_template(
+            self,
+            session: SessionDB,
+            user: UserDB,
+            note: str = None
+    ):
+
+        l = []
+
+        if user.promocode:
+            l.append(f"{self._bold('Your promo code:')} {user.promocode}")
+            l.append("")
+
+        c = f"{emoji.THIS} Enter your promo code."
+        if user.promocode:
+            c = f"{emoji.THIS} Update your promo code if needed."
+
+        l.append(self._bold(c))
+
+        l.extend([
+            "",
+            self._bold("Examples:"),
+            "- ABCD",
+            "- HELL",
+            "- QWER",
+            "",
+            self._bold("Promo code must contain exactly 4 Latin letters."),
+            self._bold('Enter "yes (y)" to confirm.')
+        ])
+
+        if note:
+            l.append("")
+            l.append(self._bold("Note:"))
+            l.append(note)
+
+        return ResponsePayloadCollection(
+            responses=[
+                ResponsePayload(
+                    text="\n".join(l),
+                    keyboard=self.navigation_handler.get_navigation_keyboard_promocode(
+                        session.current_step,
+                        show_yes=bool(user.promocode),
+                    )
+                )
+            ]
+        )
+
+    async def quote_search_template(
+            self,
+            session: SessionDB,
+            message: Optional[str] = None
+    ) -> ResponsePayloadCollection:
+
+        search = session.data.quote_search
+        page_size = search.limit or 5
+
+        total = search.total or 0
+        current_page = search.offset + 1
+        total_pages = max(1, (total + page_size - 1) // page_size)
+
+        # ---------------- HEADER ----------------
+        header_lines = [
+            self._bold(f"{emoji.NOTE} Quote requests"),
+            "",
+            self._bold(f"{emoji.THIS} Choose from list (e.g. 1, 2, 3)"),
+        ]
+
+        if message:
+            header_lines.extend([
+                "",
+                self._bold("Note:"),
+                message
+            ])
+
+        header = "\n".join(header_lines) + "\n\n"
+
+        # ---------------- BUILD BLOCKS ----------------
+        blocks = []
+
+        if not search.ids:
+            blocks.append(f"{emoji.YELLOW_ALERT} No quote requests found.\n")
+        else:
+            for i, id in enumerate(search.ids, 1):
+                quote_r, err = await self.sql_db.get_quote_by_id(id)
+                if err:
+                    continue
+
+                eta = "-"
+                if quote_r.eta_from and quote_r.eta_to:
+                    eta = f"{quote_r.eta_from.strftime('%b %d').lower()} - {quote_r.eta_to.strftime('%b %d').lower()}"
+
+                port_text = "-"
+                if quote_r.port_id:
+                    port, _ = await self.sql_db.get_port_by_id(quote_r.port_id)
+                    if port:
+                        port_text = port.format_port()
+
+                fuel_lines = []
+                if quote_r.fuels and any(f.quantity for f in quote_r.fuels):
+                    for f in quote_r.fuels:
+                        qty = f.quantity or "-"
+                        price = f.price or "-"
+                        total_cost = "-"
+                        if f.quantity and f.price:
+                            total_cost = f.quantity * f.price
+
+                        fuel_lines.append(
+                            f"   - {f.fuel_name}: {qty} mt @ {price} → ${total_cost}"
+                        )
+
+                block_lines = [
+                    "━━━━━━━━━━━━━━",
+                    f"{i}. {emoji.SHIP} <b>{quote_r.vessel_name or 'Unknown vessel'}</b>",
+                    f"{emoji.ID} IMO: {quote_r.vessel_imo or '-'}",
+                    f"{emoji.PIN} Port: {port_text}",
+                    f"{emoji.CALENDAR} ETA: {eta}",
+                    f"{emoji.OFFICE} Company: {quote_r.company_name or '-'}",
+                ]
+
+                if fuel_lines:
+                    block_lines.append(f"{emoji.OIL_DUM} Fuels:")
+                    block_lines.extend(fuel_lines)
+
+                if quote_r.remark:
+                    block_lines.append(f"{emoji.NOTE} Remark: {quote_r.remark}")
+
+                block_lines.append("")
+
+                blocks.append("\n".join(block_lines))
+
+        # ---------------- CHUNKING ----------------
+        MAX_LEN = self.MAX_MSG_LEN
+        chunks = []
+
+        current_chunk = ""
+        first_limit = MAX_LEN - len(header)
+
+        for block in blocks:
+            limit = first_limit if not chunks else MAX_LEN
+
+            if len(current_chunk) + len(block) > limit:
+                chunks.append(current_chunk)
+                current_chunk = block
+            else:
+                current_chunk += block
+
+        if current_chunk:
+            chunks.append(current_chunk)
+
+        # ---------------- RESPONSES ----------------
+        responses = []
+
+        # first message with header
+        responses.append(
+            ResponsePayload(
+                text=header + chunks[0],
+                keyboard=None
+            )
+        )
+
+        # middle chunks
+        for chunk in chunks[1:]:
+            responses.append(ResponsePayload(text=chunk, keyboard=None))
+
+        # ---------------- FOOTER ----------------
+        footer = "\n".join([
+            "",
+            f"Page {current_page} / {total_pages} • Total: {total}",
+            "",
+            "Navigation:",
+            "+ — next",
+            "- — prev",
+            "number — open",
+            "del number - delete quote with number",
+            "menu — main menu"
+        ])
+
+        responses.append(
+            ResponsePayload(
+                text=footer,
+                keyboard=self.navigation_handler.get_show_route_navigation_keyboard(session)
+            )
+        )
+
+        return ResponsePayloadCollection(responses=responses)
+
+    async def show_quote_template(
+            self,
+            quote: QuoteRequestDB,
+            message: Optional[str] = None,
+            file: Optional[MediaFile] = None
+    ) -> ResponsePayloadCollection:
+
+        # -------- ETA --------
+        eta = "-"
+        if quote.eta_from and quote.eta_to:
+            eta = f"{quote.eta_from.strftime('%b %d').lower()} - {quote.eta_to.strftime('%b %d').lower()}"
+
+        # -------- PORT --------
+        port_text = "-"
+        if quote.port_id:
+            port, _ = await self.sql_db.get_port_by_id(quote.port_id)
+            if port:
+                port_text = port.format_port()
+
+        # -------- HEADER --------
+        lines = [
+            f"{emoji.DOC} {self._bold('Quote details')}",
+            "",
+            f"{emoji.OFFICE} {self._bold('Company:')} {quote.company_name or '-'}",
+            f"{emoji.SHIP} {self._bold('Vessel:')} {quote.vessel_name or '-'}",
+            f"{emoji.ID} {self._bold('IMO:')} {quote.vessel_imo or '-'}",
+            f"{emoji.PIN} {self._bold('Port:')} {port_text}",
+            f"{emoji.CALENDAR} {self._bold('ETA:')} {eta}",
+        ]
+
+        # -------- FUELS --------
+        if quote.fuels and any(f.quantity for f in quote.fuels):
+            lines.extend([
+                "",
+                f"{emoji.OIL_DUM} {self._bold('Fuels:')}"
+            ])
+
+            for f in quote.fuels:
+                qty = f.quantity if f.quantity is not None else "-"
+                price = f.price if f.price is not None else "-"
+                total = "-"
+
+                if f.quantity and f.price:
+                    total = f.quantity * f.price
+
+                lines.append(
+                    f" - {f.fuel_name}: {qty} mt @ {price} → ${total}"
+                )
+
+        # -------- REMARK --------
+        if quote.remark:
+            lines.extend([
+                "",
+                f"{emoji.NOTE} {self._bold('Remark:')} {quote.remark}"
+            ])
+
+        # -------- MESSAGE --------
+        if message:
+            lines.extend([
+                "",
+                self._bold("Note:"),
+                message
+            ])
+
+        # -------- NAVIGATION --------
+        lines.extend([
+            "",
+            self._bold("Navigation:"),
+            "- back(b) — to list",
+            "- delete(d) - delete this quote"
+            "- menu — main menu"
+        ])
+
+        return ResponsePayloadCollection(
+            responses=[
+                ResponsePayload(
+                    text="\n".join(lines),
+                    keyboard=self.navigation_handler.get_show_route_navigation_keyboard(),
+                    files=[file] if file else []
+                )
+            ]
+        )
+
+    async def start_phone_number_template(
+            self,
+            session: SessionDB,
+            user: UserDB,
+            note: str = None
+    ):
+        lines = []
+
+        if user.phone_number:
+            lines.append(f"{self._bold('Your phone:')} {user.phone_number}")
+            lines.append("")
+
+        c = f"{emoji.THIS} Enter your phone number."
+        if user.phone_number:
+            c = f"{emoji.THIS} Update your phone number if needed."
+
+        lines.append(self._bold(c))
+
+        lines.extend([
+            "",
+            self._bold("Examples:"),
+            "- +4512345678",
+            "- +447911123456",
+            "- 4917612345678",
+            "",
+            self._bold("Use international format if possible.")
+        ])
+
+        if note:
+            lines.extend([
+                "",
+                self._bold("Note:"),
+                note
+            ])
+
+        return ResponsePayloadCollection(
+            responses=[
+                ResponsePayload(
+                    text="\n".join(lines),
+                    keyboard=self.navigation_handler.get_navigation_keyboard(
+                        session.current_step,
+                        show_yes=bool(user.phone_number),
+                        show_menu=False
+                    )
+                )
+            ]
+        )

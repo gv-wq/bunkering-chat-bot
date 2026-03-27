@@ -10,7 +10,7 @@ LUPA = "🔍"
 TARGET = "🎯"
 PIN = "📍"
 PLANET = "🗺"
-
+YELLOW_ALERT = "⚠️"
 CALENDAR = "🗓️"
 SPEED = "🏎️"
 OIL_DUM = "🛢️"
@@ -53,9 +53,15 @@ NUM1 = '1️⃣'
 NUM2 = "2️⃣'"
 NUM3 = "3️⃣"
 
+ID = "🆔"
+OFFICE = "🏢"
+DOC = "🗎"
 
 OIL_STATION = "⛽"
 HOME = "🏠"
 SOS = "🆘"
+HEAD = "🗣"
 
+QUESTION = "❓"
+MAP = "⛯"
 

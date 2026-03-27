@@ -6,7 +6,7 @@ from app.services.utils import utils
 
 from pydantic import BaseModel, Field, field_serializer
 
-from app.data import emogye
+from app.data import emoji
 from app.data.dto.main.SeaPort import SeaPortDB
 
 PRICE_ON_REQUEST = "on request"
@@ -68,8 +68,8 @@ class BunkeringStep(BaseModel):
         p = self.port
 
         # Status indicators
-        mark = emogye.CHECK_GRAY if self.selected else ""
-        green_dot = emogye.STAR if self.marked else ""
+        mark = emoji.CHECK_GRAY if self.selected else ""
+        green_dot = emoji.STAR if self.marked else ""
 
         # Format ETA
         eta_formatted = self.eta_datetime.strftime("%B %d, %Y").replace(" 0", " ")
@@ -113,10 +113,28 @@ class BunkeringStep(BaseModel):
 
         fuel_info = {fuel: self.fuel_info[fuel] for fuel in ordered_fuels}
 
+        total_cost = 0
         for fuel_name, info in fuel_info.items():
-            qty = info.get("quantity") or emogye.LINE
-            price = info.get("fuel_price") or emogye.LINE
-            lines.append(f"{emogye.SMALL_DOT} {fuel_name}: {qty} mt - ${price}/mt")
+
+            qty = info.get("quantity")
+            price = info.get("fuel_price")
+            cost = None
+            any_ = False
+            m = ""
+            if qty and price:
+                cost = qty * price
+                total_cost += cost
+                m = f" = {cost}"
+                any_ = True
+
+
+            lines.append(f"{emoji.SMALL_DOT} {fuel_name}: {qty  or emoji.LINE } mt * ${price or emoji.LINE}/mt {m}")
+
+        total_cost_t = emoji.LINE
+        if any_:
+            total_cost_t = total_cost
+
+        lines.append(f"Total cost: {total_cost_t}")
         lines.append("")
 
         return "\n".join(lines)

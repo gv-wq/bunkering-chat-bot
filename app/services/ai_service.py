@@ -9,16 +9,23 @@ import openai
 from openai.types.chat import ChatCompletionUserMessageParam
 
 from app.data.dto.main.Fuel import FuelDB
+from app.data.dto.main.FuelData import FuelData
 from app.data.dto.main.PortIntent import PortIntent
 from app.data.dto.main.PortSelectionData import PortSelectionData
 from app.data.dto.main.SeaPort import SeaPortDB
 from app.data.dto.main.SeaRoute import SeaRouteDB
 from app.data.dto.main.Session import SessionDB
 from app.data.enums.RouteStep import RouteStepEnum
+from app.data.enums.RouteTask import RouteTaskEnum
 from app.handlers.navigation_handler import NavigationHandler
 from app.services.db_service import DbService
 from app.services.utils import utils
-
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 IMO_REGEX = re.compile(
     r"""
@@ -66,13 +73,21 @@ EMAIL_REGEX = re.compile(
     """,
     re.VERBOSE
 )
-
+ROLE_OPTIONS = [
+    "Ship owner",
+    "Ship operator",
+    "Fleet / Voyage manager",
+    "Bunker trader / Supplier",
+    "Charterer",
+    "Technical / Other"
+]
 
 import httpx
 
 class AiService:
     def __init__(self, navigation_handler: NavigationHandler, sql_db_service: DbService):
         api_key = os.getenv("OPENAI_API_KEY")
+        logging.info(f"-------------------------- OpenAI API Key: {api_key}")
         if os.getenv("APP_MODE") == "development":
             http_client = httpx.Client(
                 proxy="socks5h://127.0.0.1:1082",
@@ -1105,6 +1120,48 @@ class AiService:
             "ports": valid_updates
         }, None
 
+
+    async def parse_fuel_quantity(self, message: str, fuels: List[FuelData]):
+        q = message.lower().strip()
+
+        if self.is_validation_positive(q):
+            return {"action": "confirm"}, None
+
+        groups = re.split(r"\s*/\s*", q)
+
+        for group in groups:
+            tokens = group.split()
+            if len(tokens) < 2:
+                continue
+
+            # ---- PORT NUMBER ----
+            if not tokens[0].isdigit() or not tokens[1].isdigit():
+                continue
+
+            n = int(tokens[0])
+            m = float(tokens[1])
+
+            if (n < 0) or ( n - 1 > len(fuels) - 1):
+                continue
+
+            if (m < 0) or (m > 100000000000):
+                continue
+
+            f = fuels[n - 1]
+            f.quantity = m
+
+        return {"action": "update", "fuels": fuels}, None
+
+
+
+
+
+
+
+
+
+
+
     # async def parse_bunkering_fuel_queue_intent(self, route: SeaRouteDB,  message):
     #     try:
     #         if self.is_validation_positive(message):
@@ -1330,7 +1387,8 @@ class AiService:
 
         if session.data.check_port_fuel_price:
             ports = session.data.check_port_fuel_price.port_alternatives
-            ports.append(session.data.check_port_fuel_price.port)
+            if session.data.check_port_fuel_price.port:
+                ports.append(session.data.check_port_fuel_price.port)
 
         if q.isdigit():
             port = utils.resolve_port_by_index(ports, int(q))
@@ -1342,7 +1400,7 @@ class AiService:
 
         existing_locodes = []
 
-        for p in ports:
+        for p in [p for p in ports if p]:
             existing_locodes.append(p.locode)
             candidates = [
                 p.port_name.lower(),
@@ -1366,6 +1424,9 @@ class AiService:
         #return best_locode
 
     async def parse_port_fuel_price_intend_2(self, session: SessionDB, message: str) -> Dict:
+        if message.lower().strip() == "get_supplier_quote":
+            return {"navigation": "supplier_quote_request"}
+
         r = {}
         parsed, err = await self.parse_date_info(message)
 
@@ -2150,6 +2211,30 @@ class AiService:
         except Exception as e:
             return {"action": "error"}, None
 
+    def parse_user_role(self, value: str) -> tuple[str | None, str | None]:
+
+        # 1. Strict numeric input
+        if value.isdigit():
+            idx = int(value)
+            if 1 <= idx <= len(ROLE_OPTIONS):
+                return ROLE_OPTIONS[idx - 1], None
+            return None, "Please choose a valid option (1–6)."
+
+        # 2. Fuzzy match ONLY within allowed options
+        best_match = None
+        best_score = 0.0
+
+        for option in ROLE_OPTIONS:
+            score = SequenceMatcher(None, value, option.lower()).ratio()
+            if score > best_score:
+                best_score = score
+                best_match = option
+
+        if best_score < 0.6:
+            return None, "Please select a role using numbers (1–6)."
+
+        return best_match, None
+
     async def parse_new_user_intent(self, message):
         try:
             if self.is_validation_positive(message):
@@ -2227,3 +2312,74 @@ class AiService:
 
         except Exception as e:
             return None, str(e)
+
+    async def parse_route_research_intent(self, message):
+        try:
+            q = message.lower().strip()
+            if q == "1":
+                return RouteTaskEnum.CREATE_ROUTE.value, None
+
+            elif q == "2":
+                return RouteTaskEnum.SEARCH_ROUTE.value, None
+
+            options = [ RouteTaskEnum.CREATE_ROUTE.value, RouteTaskEnum.SEARCH_ROUTE.value]
+
+            best_role = None
+            best_score = 0.0
+
+            for i, option in enumerate(options, 1):
+                candidates = [str(i), option.lower()]
+                score = max([SequenceMatcher(None, q, c).ratio() for c in candidates])
+                if score > best_score:
+                    best_score = score
+                    best_role = option
+
+            if best_score < 0.5:
+                return None, "Could not detect intent. Please select from options."
+
+            if not best_role:
+                return None, "Could not find the option by the way."
+
+            return best_role, None
+
+        except Exception as ex:
+            return None, str(ex)
+
+    async def parse_quote_research_intent(self, message):
+        try:
+            q = message.lower().strip()
+            if q == "1":
+                return RouteTaskEnum.SUPPLIER_REQUEST_CREATE.value, None
+
+            elif q == "2":
+                return RouteTaskEnum.SUPPLIER_REQUEST_LIST.value, None
+
+            options = [RouteTaskEnum.SUPPLIER_REQUEST_CREATE.value, RouteTaskEnum.SUPPLIER_REQUEST_LIST.value]
+
+            best_role = None
+            best_score = 0.0
+
+            for i, option in enumerate(options, 1):
+                candidates = [str(i), option.lower()]
+                score = max([SequenceMatcher(None, q, c).ratio() for c in candidates])
+                if score > best_score:
+                    best_score = score
+                    best_role = option
+
+            if best_score < 0.5:
+                return None, "Could not detect intent. Please select from options."
+
+            if not best_role:
+                return None, "Could not find the option by the way."
+
+            return best_role, None
+
+        except Exception as ex:
+            return None, str(ex)
+
+
+    async def quote_remark(self, message):
+        message = message.strip()
+        if self.is_validation_positive(message):
+            return {"action": "confirm"}, None
+        return {"action": "update", "remark": message }, None

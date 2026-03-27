@@ -37,6 +37,11 @@ class EventType(str, Enum):
     SOS_REQUESTED = "sos_requested"
     ERROR = "error"
 
+    QUOTE_REQUEST_STARTED = "quote_request_started"
+
+
+
+
 
 class Event(BaseModel):
     user_id: UUID = Field(..., description="User ID")
@@ -266,6 +271,15 @@ class Event(BaseModel):
         return cls(
             user_id=user_id,
             type=EventType.ERROR,
+            timestamp=cls._now(),
+            j=payload or {}
+        )
+
+    @classmethod
+    def quote_request_started(cls, user_id: UUID, payload: Dict = None):
+        return cls(
+            user_id=user_id,
+            type=EventType.QUOTE_REQUEST_STARTED,
             timestamp=cls._now(),
             j=payload or {}
         )

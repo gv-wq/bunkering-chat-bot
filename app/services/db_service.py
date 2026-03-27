@@ -4,7 +4,7 @@ import os
 import uuid
 import asyncio
 from datetime import datetime, timedelta
-from typing import Any, List, Optional, Tuple, Dict
+from typing import Any, List, Optional, Tuple, Dict, Coroutine
 from uuid import UUID
 
 import asyncpg
@@ -18,6 +18,7 @@ from app.data.dto.main.Fuel import FuelDB
 from app.data.dto.main.MabuxPortLocodeMap import MabuxPortLocodeMap, MabuxPortLocodeMapDB
 from app.data.dto.main.MabuxPortFuelPrice import MabuxPortFuelPrice, MabuxPortFuelPriceDB
 from app.data.dto.main.PortFuelPrice import PortFuelPrice, PortFuelPriceDB
+from app.data.dto.main.QuoteRequestDB import QuoteRequestDB, QuoteRequest
 from app.data.dto.main.SeaPort import SeaPortDB, SeaPortBubble
 from app.data.dto.main.SeaRoute import SeaRouteDB
 from app.data.dto.main.Session import SessionDB
@@ -62,69 +63,31 @@ class DbService:
         self.simple_pool = SimpleConnectionPool(1, 20, dsn)
         #self.simple_conn = self.simple_pool.getconn()
 
-    # async def create_user(
-    #     self,
-    #     telegram_id: int,
-    #     telegram_user_name: str = None,
-    #     phone_number: str = None,
-    #     first_name: str = None,
-    #     last_name: str = None,
-    #     email: str = None,
-    #     telegram_effective_chat_id: int = None
-    # ) -> Tuple[Optional[UserDB], Optional[str]]:
-    #     try:
-    #         async with self.connection_pool.acquire() as conn:
-    #             # First get the Basic tariff ID
-    #             basic_tariff = await conn.fetchrow(
-    #                 "SELECT id FROM user_tariffs WHERE name = 'Basic' AND is_active = true"
-    #             )
-    #
-    #             if not basic_tariff:
-    #                 return None, "Basic tariff not found"
-    #
-    #             # Create new user with new fields
-    #             row = await conn.fetchrow(
-    #                 """
-    #                 INSERT INTO users (
-    #                     telegram_id, telegram_user_name, phone_number,
-    #                     first_name, last_name, email, registration_date,
-    #                     current_tariff_id, free_tier_expiry, is_active, telegram_effective_chat_id
-    #                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-    #                 RETURNING *
-    #             """,
-    #                 telegram_id,
-    #                 telegram_user_name,
-    #                 phone_number,
-    #                 first_name,
-    #                 last_name,
-    #                 email,
-    #                 datetime.now(),
-    #                 basic_tariff["id"],
-    #                 datetime.now(),
-    #                 True,
-    #                 telegram_effective_chat_id
-    #             )
-    #
-    #             return UserDB.from_db_row(row), None
-    #     except Exception as e:
-    #         return None, f"Error creating user: {str(e)}"
 
-    async def create_user(
-            self,
-            data: dict
-    ) -> Tuple[Optional[UserDB], Optional[str]]:
+
+    async def create_user(self, data: dict) -> Tuple[Optional[UserDB], Optional[str]]:
         try:
             async with self.connection_pool.acquire() as conn:
-                # Get Basic tariff
-                basic_tariff = await conn.fetchrow(
-                    "SELECT id FROM user_tariffs WHERE name = 'Basic' AND is_active = true"
-                )
+                basic_tariff = await conn.fetchrow("SELECT id FROM user_tariffs WHERE name = 'Basic' AND is_active = true")
 
                 if not basic_tariff:
                     return None, "Basic tariff not found"
 
                 now = datetime.now()
                 phone_number = utils.clean_phone_number(data.get("phone_number"))
+
+                tg_id = data.get("telegram_id")
+                if tg_id:
+                    tg_id = int(tg_id)
+
+                telegram_effective_chat_id = data.get("telegram_effective_chat_id")
+                if telegram_effective_chat_id:
+                    telegram_effective_chat_id = int(telegram_effective_chat_id)
+
+                whatsapp_business_id = data.get("whatsapp_business_id")
+                if whatsapp_business_id:
+                    whatsapp_business_id = int(whatsapp_business_id)
+
 
                 row = await conn.fetchrow(
                     """
@@ -149,23 +112,24 @@ class DbService:
                         free_tier_expiry,
                         is_active,
                         message_count,
-                        route_count
+                        route_count,
+                        promocode
                     )
                     VALUES (
                         $1,$2,$3,
                         $4,$5,$6,$7,$8,
                         $9,$10,$11,$12,
-                        $13,$14,$15,$16,$17,$18
+                        $13,$14,$15,$16,$17,$18,$19
                     )
                     RETURNING *
                     """,
-                    data.get("telegram_id"),
+                    tg_id,
                     data.get("telegram_user_name"),
-                    data.get("telegram_effective_chat_id"),
+                    telegram_effective_chat_id,
 
                     data.get("whatsapp_phone"),
                     data.get("whatsapp_effective_chat"),
-                    data.get("whatsapp_business_id"),
+                    whatsapp_business_id,
                     data.get("whatsapp_name"),
                     data.get("whatsapp_profile_pic_url"),
 
@@ -179,7 +143,8 @@ class DbService:
                     now,
                     True,
                     0,
-                    0
+                    0,
+                    data.get("promocode")
                 )
 
                 return UserDB.from_db_row(row), None
@@ -235,33 +200,6 @@ class DbService:
         except Exception as e:
             return None, str(e)
 
-
-    async def get_or_create_user(
-        self, telegram_id: int, user_data: dict = None
-    ) -> Tuple[Optional[UserDB], Optional[str]]:
-        """Get existing user or create new one with Basic tariff"""
-        user, err = await self.get_user_by_telegram_id(telegram_id)
-        if err:
-            return None, err
-
-        if user:
-            return user, None
-
-        # Create new user with new fields
-        telegram_user_name = user_data.get("telegram_user_name") if user_data else None
-        phone_number = user_data.get("phone_number") if user_data else None
-        first_name = user_data.get("first_name") if user_data else None
-        last_name = user_data.get("last_name") if user_data else None
-        email = user_data.get("email") if user_data else None
-
-        return await self.create_user(
-            telegram_id=telegram_id,
-            telegram_user_name=telegram_user_name,
-            phone_number=phone_number,
-            first_name=first_name,
-            last_name=last_name,
-            email=email,
-        )
 
     async def get_user_by_id(
         self, user_id: UUID
@@ -335,19 +273,6 @@ class DbService:
 
         except Exception as e:
             return None, f"Tariff assignment error: {str(e)}"
-
-    # async def get_session(self, user_id: UUID) -> Tuple[Optional[SessionDB], Optional[str]]:
-    #     try:
-    #         async with self.connection_pool.acquire() as conn:
-    #             row = await conn.fetchrow(
-    #                 "SELECT * FROM user_sessions WHERE user_id = $1 ORDER BY last_activity DESC LIMIT 1",
-    #                 user_id
-    #             )
-    #             if not row:
-    #                 return None, None
-    #             return SessionDB.from_db_row(row), None
-    #     except Exception as e:
-    #         return None, str(e)
 
     async def get_or_create_session(
         self, user_id: UUID
@@ -580,8 +505,6 @@ class DbService:
         except Exception as e:
             return None, str(e)
 
-
-
     async def get_port_by_country_and_port_names(self, country_name: str, port_name: str) -> Tuple[Optional[SeaPortDB], Optional[str]]:
         try:
             async with self.connection_pool.acquire() as conn:
@@ -641,8 +564,6 @@ class DbService:
         except Exception as e:
             return None, str(e)
 
-
-
     async def find_ports_by_similar_name(
         self, name: str
     ) -> Tuple[List[SeaPortDB], Optional[str]]:
@@ -698,16 +619,203 @@ class DbService:
 
             return route, None
 
-    async def get_route_by_id(
-        self, route_id: str
-    ) -> Tuple[Optional[SeaRouteDB], Optional[str]]:
-        """Get route by ID"""
+    async def get_or_create_quote_request(self, session: SessionDB) -> Tuple[Optional[QuoteRequestDB], Optional[str]]:
+            if session.route_id:
+                route, err = await self.get_quote_request_by_id(str(session.route_id))
+                if err:
+                    return None, f"Route fetch error: {err}"
+                return route, None
+            else:
+                quote_data = {
+                    "user_id": session.user_id,
+                    "status": "draft",
+                    "vessel_name": None,
+                    "imo_number": None,
+                    "port_id": None,
+                    "eta_from": None,
+                    "eta_to": None,
+                    "fuels": {},
+                    "remark": "",
+                    "company_name": None,
+                    "map_image_bytes" : None,
+                    "data": {},
+                }
+                route, err = await self.create_quote_request(quote_data)
+                if err:
+                    return None, f"Route creation error: {err}"
+
+                # Update session with route ID
+                await self.update_session(
+                    session.user_id,
+                    session.current_task,
+                    session.current_step,
+                    route.id,
+                    session.data,
+                )
+
+                await self.create_event(Event.quote_request_started(session.user_id))
+
+                return route, None
+
+    async def get_quote_request_by_id(self, quote_id: str) -> tuple[None, str] | tuple[QuoteRequest, None]:
         try:
             async with self.connection_pool.acquire() as conn:
                 row = await conn.fetchrow(
-                    "SELECT * FROM routes WHERE id = $1",
-                    uuid.UUID(route_id),
+                    "SELECT * FROM public.quote_requests WHERE id = $1",
+                    uuid.UUID(quote_id),
                 )
+                if not row:
+                    return None, "Route not found"
+                return QuoteRequestDB.from_dict(row), None
+        except Exception as e:
+            return None, f"Route fetch error: {str(e)}"
+
+    async def create_quote_request(self, data: dict) -> tuple[None, str] | tuple[QuoteRequest, None]:
+        try:
+            async with self.connection_pool.acquire() as conn:
+
+
+                fuels = json.dumps([f.model_dump() for f in data.get("fuels", [])])
+
+                values = [
+                    data.get("user_id"),
+                    data.get("status", "draft"),
+                    data.get("vessel_name"),
+                    data.get("vessel_imo"),
+                    data.get("port_id"),
+                    data.get("eta_from"),
+                    data.get("eta_to"),
+                    fuels,
+                    data.get("remark", ""),
+                    data.get("company_name"),
+                    data.get("map_image_bytes", b''),
+                    json.dumps(data.get("data", {})),
+                ]
+
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO public.quote_requests (user_id, status, vessel_name, vessel_imo,  port_id, eta_from, eta_to, fuels, remark, company_name, map_image_bytes, data)
+                    VALUES                            ($1,      $2,     $3,          $4,          $5,      $6,       $7,     $8,    $9,     $10,          $11,             $12)
+                    RETURNING *
+                """,
+                    *values,
+                )
+                return QuoteRequestDB.from_dict(row), None
+        except Exception as e:
+            return None, f"Route creation error: {str(e)}"
+
+    # ---------------------- GET BY ID ----------------------
+    async def get_quote_by_id(
+            self,
+            quote_id: str
+    ) -> tuple[Optional[QuoteRequestDB], Optional[str]]:
+        try:
+            async with self.connection_pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT id, user_id, status, vessel_name, vessel_imo, port_id,
+                           eta_to, fuels, remark, data, created_at, updated_at,
+                           eta_from, company_name, deleted
+                    FROM public.quote_requests
+                    WHERE id = $1
+                    """,
+                    quote_id
+                )
+
+                if not row:
+                    return None, "Quote not found"
+
+                return QuoteRequestDB.from_dict(dict(row)), None
+
+        except Exception as e:
+            return None, str(e)
+
+    async def mark_quote_deleted(self, quote_id: str) -> tuple[Optional[QuoteRequestDB], Optional[str]]:
+        try:
+            async with self.connection_pool.acquire() as conn:
+                # First update the route
+                result = await conn.execute(
+                    """
+                    UPDATE public.quote_requests 
+                    SET deleted = true 
+                    WHERE id = $1 AND not deleted
+                    RETURNING *
+                    """,
+                    quote_id
+                )
+
+                # If no rows returned, route not found or already deleted
+                if not result:
+                    return None, "Quote not found or already deleted"
+
+                # Fetch the updated route
+                row = await conn.fetchrow("SELECT * FROM public.quote_requests  WHERE id = $1", quote_id )
+
+                if not row:
+                    return None, "Quote not found after update"
+
+                return QuoteRequestDB.from_dict(dict(row)), None
+
+        except Exception as e:
+            return None, str(e)
+
+    # ---------------------- COUNT ----------------------
+    async def count_quotes(
+            self,
+            user_id: str
+    ) -> tuple[int, Optional[str]]:
+        try:
+            async with self.connection_pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT COUNT(*) as total
+                    FROM public.quote_requests
+                    WHERE user_id = $1 AND not deleted
+                    """,
+                    user_id
+                )
+
+                return int(row["total"]), None
+
+        except Exception as e:
+            return 0, str(e)
+
+    # ---------------------- GET RANGE ----------------------
+    async def get_quotes(
+            self,
+            user_id: str,
+            offset: int,
+            limit: int
+    ) -> tuple[List[QuoteRequestDB], Optional[str]]:
+        try:
+            async with self.connection_pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT id, user_id, status, vessel_name, vessel_imo, port_id,
+                           eta_to, fuels, remark, data, created_at, updated_at,
+                           eta_from, company_name, deleted
+                    FROM public.quote_requests
+                    WHERE user_id = $1 and not deleted
+                    ORDER BY created_at DESC
+                    OFFSET $2 LIMIT $3
+                    """,
+                    user_id,
+                    offset,
+                    limit
+                )
+
+                result = [QuoteRequestDB.from_dict(dict(r)) for r in rows]
+
+                return result, None
+
+        except Exception as e:
+            return [], str(e)
+
+    async def get_route_by_id(self, route_id: str) -> Tuple[Optional[SeaRouteDB], Optional[str]]:
+        """Get route by ID"""
+        try:
+            async with self.connection_pool.acquire() as conn:
+                row = await conn.fetchrow("SELECT * FROM routes WHERE id = $1", uuid.UUID(route_id))
                 if not row:
                     return None, "Route not found"
                 return SeaRouteDB.from_db_row(row), None
@@ -728,42 +836,6 @@ class DbService:
                 return SeaRouteDB.from_db_row(row), None
         except Exception as e:
             return None, f"Route fetch error: {str(e)}"
-    #
-    # async def count_routes(
-    #         self,
-    #         user_id: uuid,
-    #         statuses: Optional[Tuple[str, ...]] = None
-    # ) -> Tuple[int, Optional[str]]:
-    #     """Count total number of routes for user"""
-    #
-    #     try:
-    #         async with self.connection_pool.acquire() as conn:
-    #             if statuses:
-    #                 rows = await conn.fetchval(
-    #                     """
-    #                     SELECT COUNT(*)
-    #                     FROM routes
-    #                     WHERE user_id = $1
-    #                       AND status = ANY($2)
-    #                     """,
-    #                     user_id,
-    #                     list(statuses),
-    #                 )
-    #             else:
-    #                 rows = await conn.fetchval(
-    #                     """
-    #                     SELECT COUNT(*)
-    #                     FROM routes
-    #                     WHERE user_id = $1
-    #                     """,
-    #                     user_id,
-    #                 )
-    #
-    #             return rows or 0, None
-    #
-    #     except Exception as e:
-    #         return 0, f"Route count error: {str(e)}"
-
 
     async def get_route_by_id_2(self, user_id: UUID, route_id: str) -> Tuple[Optional[SeaRouteDB], Optional[str]]:
         try:
@@ -793,7 +865,6 @@ class DbService:
             return None, f"Route fetch error: {str(e)}"
 
 
-
     async def count_routes(
             self,
             user_id: str,
@@ -805,7 +876,7 @@ class DbService:
                     SELECT COUNT(*)
                     FROM routes
                     WHERE user_id = $1
-                    AND ( departure_port_id IS NOT NULL OR destination_port_id IS NOT NULL)
+                    AND ( departure_port_id IS NOT NULL AND destination_port_id IS NOT NULL)
                     AND status != 'deleted'
                 """
                 params = [user_id]
@@ -1124,9 +1195,7 @@ created_at DESC
     #     except Exception as e:
     #         return None, str(e)
 
-    async def update_route(
-            self, route: SeaRouteDB
-    ) -> Tuple[Optional[SeaRouteDB], Optional[str]]:
+    async def update_route(self, route: SeaRouteDB) -> Tuple[Optional[SeaRouteDB], Optional[str]]:
         try:
             # Custom serialization for complex nested objects
             update_data = {
@@ -1150,8 +1219,6 @@ created_at DESC
                 "imo_number": route.imo_number,
             }
 
-            # Remove None values if your database columns are nullable
-            #update_data = {k: v for k, v in update_data.items() if v is not None}
             update_data = {k: v for k, v in update_data.items()}
 
             async with self.connection_pool.acquire() as conn:
@@ -1168,6 +1235,34 @@ created_at DESC
                     *values,
                 )
                 return SeaRouteDB.from_db_row(row), None
+        except Exception as e:
+            return None, str(e)
+
+    async def update_quote_request(self, r: QuoteRequestDB)  -> tuple[None, str] | tuple[QuoteRequest, None]:
+        try:
+           d = r.to_dict()
+           d.pop("id")
+
+           d = {
+               "user_id": r.user_id,
+               "status": r.status,
+               "port_id": r.port_id,
+               "vessel_name": r.vessel_name,
+               "vessel_imo": r.vessel_imo,
+               "eta_from": r.eta_from,
+               "eta_to": r.eta_to,
+               "fuels": json.dumps([fuel.model_dump() for fuel in r.fuels]),
+               "company_name": r.company_name,
+               "remark": r.remark,
+               "data": r.data.to_json()
+           }
+           d = {k: v for k,v in d.items() if v}
+
+           async with self.connection_pool.acquire() as conn:
+               set_clause = ", ".join([f"{k} = ${i + 2}" for i, k in enumerate(d.keys())])
+               values = list(d.values())
+               row = await conn.fetchrow(f"""UPDATE public.quote_requests SET {set_clause} WHERE id = $1 RETURNING *""", r.id, *values)
+               return QuoteRequestDB.from_dict(row), None
         except Exception as e:
             return None, str(e)
 
@@ -2671,24 +2766,29 @@ SELECT * FROM inserted;
             return str(e)
 
     async def log_error(self, error: ErrorLog):
-        query = """
-        INSERT INTO error_log (
-            file, line, function, position,
-            error_type, message, traceback, timestamp
-        )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-        RETURNING id;
-        """
 
-        async with self.connection_pool.acquire() as conn:
-            return await conn.fetchval(
-                query,
-                error.file,
-                error.line,
-                error.function,
-                error.position,
-                error.error_type,
-                error.message,
-                error.traceback,
-                error.timestamp
+        try:
+            query = """
+            INSERT INTO error_log (
+                file, line, function, position,
+                error_type, message, traceback, timestamp
             )
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+            RETURNING id;
+            """
+
+            async with self.connection_pool.acquire() as conn:
+                return await conn.fetchval(
+                    query,
+                    error.file,
+                    error.line,
+                    error.function,
+                    error.position,
+                    error.error_type,
+                    error.message,
+                    error.traceback,
+                    error.timestamp
+                ), None
+        except Exception as ex:
+            return None, str(ex)
+

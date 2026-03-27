@@ -1,12 +1,18 @@
 from typing import Dict, Tuple, Optional
-from app.data import emogye
+from app.data import emoji
 from app.data.dto.main.Event import Event
 from app.data.dto.main.User import UserDB
+from app.data.enums.RouteStep import RouteStepEnum
 from app.data.enums.StartStepEnum import StartStepEnum
 from app.domain.message import IncomingMessage
 from app.handlers.admin_handler import AdminHandler
+from app.handlers.route_research_handler import RouteResearchHandler
+from app.handlers.search_quote_handler import SearchQuoteHandler
+from app.handlers.supplier_quote_request_handler import SupplierQuoteRequestHandler
+from app.handlers.supplier_quote_research_handler import SupplierResearchHandler
 from app.handlers.update_tariff_handler import UpdateTariffHandler
 from app.services.external_api.searoute_api import SearouteApi
+from app.services.fuel_price_service import FuelPriceService
 from app.services.internal_api.map_builder_api import MapBuilderApi
 from app.data.dto.main.Session import SessionDB
 from app.data.dto.messenger.ResponsePayload import (
@@ -26,6 +32,13 @@ from app.services.utils import utils
 from app.services.utils.island_projection import IslandProjection
 from app.services.utils.near_country_search import RouteCountryFinder
 
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
+
 class CoreService:
     def __init__(
         self,
@@ -38,7 +51,8 @@ class CoreService:
         map_image_api: MapBuilderApi,
         admin_handler: AdminHandler,
         projector: IslandProjection,
-        country_finder: RouteCountryFinder
+        country_finder: RouteCountryFinder,
+
 
     ):
         self.admin_handler = admin_handler
@@ -50,6 +64,8 @@ class CoreService:
         self.main_menu_handler = MainMenuHandler(
             ai_service, sql_db_service, template_service
         )
+        self.port_fuel_price_service = FuelPriceService(sql_db_service)
+
         self.new_route_handler = NewRouteHandler(
             ai_service=ai_service,
             sql_db_service=sql_db_service,
@@ -59,8 +75,34 @@ class CoreService:
           #  bubble_api=bubble_api,
             map_image_api=map_image_api,
             projector=projector,
-            country_finder=country_finder
+            country_finder=country_finder,
+            port_fuel_price_service=self.port_fuel_price_service
         )
+
+        self.supplier_quote_research_handler: SupplierResearchHandler = SupplierResearchHandler(
+            ai_service=self.ai_service,
+            sql_db_service=self.sql_db_service,
+            template_service=self.template_service,
+        )
+
+
+        self.supplier_quote_request_handler = SupplierQuoteRequestHandler(
+            ai_service=self.ai_service,
+            sql_db_service=self.sql_db_service,
+            template_service=self.template_service,
+            navigation_handler=self.navigation_handler,
+            searoute_api=searoute_api,
+            port_fuel_price_service=self.port_fuel_price_service
+        )
+
+        self.quote_search_handler = SearchQuoteHandler(
+            ai_service=self.ai_service,
+            db_service=self.sql_db_service,
+            template_service=self.template_service,
+            navigation_handler=self.navigation_handler,
+            port_fuel_price_service=self.port_fuel_price_service,
+        )
+
 
         self.search_route_handler = SearchRouteHandler(
             ai_service=ai_service,
@@ -74,13 +116,23 @@ class CoreService:
             sql_db_service=sql_db_service,
             template_service=template_service,
             navigation_handler=navigation_handler,
-            searoute_api=searoute_api
+            searoute_api=searoute_api,
+            port_fuel_price_service=self.port_fuel_price_service
         )
         self.update_tariff_handler = UpdateTariffHandler(
             ai_service=ai_service,
             sql_db_service=sql_db_service,
             template_service=template_service,
             navigation_handler=navigation_handler,)
+
+        self.route_research_handler = RouteResearchHandler(
+            ai_service=ai_service,
+            sql_db_service=sql_db_service,
+            template_service=template_service,
+            new_route_handler=self.new_route_handler,
+            search_route_handler=self.search_route_handler
+        )
+
 
         self.tg_bot = None
 
@@ -136,7 +188,7 @@ class CoreService:
             d = {
                 "telegram_id": msg.user_id,
                 "telegram_effective_chat_id": msg.chat_id,
-                "telegram_user_name": msg.meta.get("telegram_user_name"),
+                "telegram_user_name": msg.meta.get("user_name"),
                 "phone_number": msg.meta.get("phone_number"),
                 "first_name": msg.meta.get("first_name"),
                 "last_name": msg.meta.get("last_name"),
@@ -205,11 +257,12 @@ class CoreService:
     async def handle(self, msg: IncomingMessage, start_status: bool = False) -> ResponsePayloadCollection:
 
         if not utils.is_valid_message(msg.text):
-            return ResponsePayloadCollection(responses=[ResponsePayload(text=f"{emogye.BRITAIN_FLAG}/{emogye.USA_FLAG} language please. Chars and digits.")])
+            return ResponsePayloadCollection(responses=[ResponsePayload(text=f"{emoji.BRITAIN_FLAG}/{emoji.USA_FLAG} language please. Chars and digits.")])
 
         user_db, err = await self.get_or_create_user(msg)
         if not user_db or err:
-            return ResponsePayloadCollection(responses=[ResponsePayload(text="could not register  you, something went wrong")])
+            logger.info(f"User not registered. Error: {err}")
+            return ResponsePayloadCollection(responses=[ResponsePayload(text=f"could not register  you, something went wrong. {err}")])
 
         t, err = await self.sql_db_service.create_event(Event.new_message(
             user_id=user_db.id,
@@ -237,10 +290,13 @@ class CoreService:
         if err:
             return ResponsePayloadCollection(responses=[ResponsePayload(err=f"Intent parsing error: {err}")])
 
-        if user_tariff.exceeded(user_db.route_count, user_db.message_count) and not user_db.is_admin is True:
+        if user_tariff.exceeded(user_db.route_count, user_db.message_count) and not user_db.is_admin:
             intent["update_tariff"] = True
 
-        if user_db.message_count == 0:
+        if user_db.is_admin and session.current_task == RouteTaskEnum.UPDATE_TARIFF.value:
+            session, err = await self.sql_db_service.update_session(user_db.id, RouteTaskEnum.MAIN_MENU.value, RouteStepEnum.MAIN_MENU.value, session.route_id, session.data)
+
+        if user_db.message_count == 0 or user_db.role is None:
             intent["is_start"] = True
 
         if start_status:
@@ -266,16 +322,15 @@ class CoreService:
         if intent.get("is_sos", None):
             return await self.handle_sos(user, session)
 
-        if intent["main_menu"]:
+        if intent["main_menu"] and session.current_task not in (RouteTaskEnum.START.value, RouteTaskEnum.UPDATE_TARIFF.value):
             if session.current_step in (StartStepEnum.ROLE.value, StartStepEnum.USER_NAME.value):
                 return await self.main_menu_handler.handle_start(session, message, user.is_admin)
 
             session, err = await self.main_menu_handler.to_main_menu(session)
 
         elif intent["prev_step"]:
-            if session.current_step in (StartStepEnum.ROLE.value, StartStepEnum.USER_NAME.value):
-                return await self.main_menu_handler.handle_start(session, message, user.is_admin)
-
+            #if session.current_step in (StartStepEnum.ROLE.value, StartStepEnum.USER_NAME.value, StartStepEnum.EMAIL.value, StartStepEnum.PROMOCODE.value):
+            #    return await self.main_menu_handler.handle_start(session, message, user.is_admin)
 
             session, err = await self.navigation_handler.to_prev_step(session)
             return await self.template_service.session_template(session, err, is_admin=user.is_admin)
@@ -299,7 +354,10 @@ class CoreService:
         if session.current_task == RouteTaskEnum.MAIN_MENU.value:
             return await self.main_menu_handler.handle_main_menu(session, message, user.is_admin)
 
-        elif session.current_task == RouteTaskEnum.CREATE_ROUTE.value:
+        if session.current_task == RouteTaskEnum.ROUTE_RESEARCH.value:
+            return await self.route_research_handler.handle(session, message)
+
+        if session.current_task == RouteTaskEnum.CREATE_ROUTE.value:
             return await self.new_route_handler.handle_create_route_flow(session=session, message=message)
 
         elif session.current_task == RouteTaskEnum.GET_PORT_PRICE.value:
@@ -307,6 +365,15 @@ class CoreService:
 
         elif session.current_task == RouteTaskEnum.SEARCH_ROUTE.value:
             return await self.search_route_handler.handle(session=session, message=message)
+
+        elif session.current_task == RouteTaskEnum.SUPPLIER_RESEARCH.value:
+            return await self.supplier_quote_research_handler.handle(session=session, message=message)
+
+        elif session.current_task == RouteTaskEnum.SUPPLIER_REQUEST_CREATE.value:
+            return await self.supplier_quote_request_handler.handle(session=session, message=message)
+
+        elif session.current_task == RouteTaskEnum.SUPPLIER_REQUEST_LIST.value:
+            return await self.quote_search_handler.handle(session=session, message=message)
 
         elif session.current_task == RouteTaskEnum.UPDATE_TARIFF.value:
             return await self.update_tariff_handler.handle(session=session, message=message)

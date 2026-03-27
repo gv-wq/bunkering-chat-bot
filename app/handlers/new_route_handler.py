@@ -7,9 +7,8 @@ import asyncio
 import datetime
 from typing import List, Dict, Optional
 
-from app.data import emogye
+from app.data import emoji
 from app.data.dto.main.BunkeringStep import BunkeringStep
-
 from app.data.dto.main.Event import Event
 
 
@@ -28,8 +27,10 @@ from app.handlers.navigation_handler import NavigationHandler
 from app.services.ai_service import AiService
 from app.services.db_service import DbService
 from app.services.email_sender import EmailSender
+from app.services.external_api.request_limiter import RequestLimiter
 
 from app.services.external_api.searoute_api import SearouteApi
+from app.services.fuel_price_service import FuelPriceService
 from app.services.internal_api.map_builder_api import MapBuilderApi
 from app.services.template.telegram_template_service import TemplateService
 from app.services.utils import searoute_utils, email_sender, utils
@@ -37,25 +38,6 @@ from app.services.utils.island_projection import IslandProjection
 from app.services.utils.near_country_search import RouteCountryFinder
 
 
-class SeaRouteLimiter:
-    def __init__(self, max_concurrent: int, rps: float):
-        self._sem = asyncio.Semaphore(max_concurrent)
-        self._interval = 1 / rps
-        self._last_call = 0.0
-        self._lock = asyncio.Lock()
-
-    async def acquire(self):
-        async with self._lock:
-            now = asyncio.get_running_loop().time()
-            wait = self._interval - (now - self._last_call)
-            if wait > 0:
-                await asyncio.sleep(wait)
-            self._last_call = asyncio.get_running_loop().time()
-
-        await self._sem.acquire()
-
-    def release(self):
-        self._sem.release()
 
 class NewRouteHandler:
     def __init__(
@@ -68,7 +50,8 @@ class NewRouteHandler:
         #bubble_api: BubbleApi,
         map_image_api: MapBuilderApi,
         projector: IslandProjection,
-        country_finder: RouteCountryFinder
+        country_finder: RouteCountryFinder,
+        port_fuel_price_service: FuelPriceService,
     ):
         self.ai_service = ai_service
         self.sql_db_service = sql_db_service
@@ -79,9 +62,10 @@ class NewRouteHandler:
         self.map_image_api = map_image_api
         self.email_sender = EmailSender()
 
-        self.searoute_limiter = SeaRouteLimiter(1, 0.6)
+        self.searoute_limiter = RequestLimiter(1, 0.6)
         self.proj = projector
         self.country_finder = country_finder
+        self.port_fuel_price_service=port_fuel_price_service
 
     async def handle_create_route_flow(self, session: SessionDB, message: str) -> ResponsePayloadCollection:
         """Flow создания маршрута"""
@@ -146,6 +130,9 @@ class NewRouteHandler:
             return await self._handle_unknown_intent(session, route, intent)
 
     async def finish_route(self, session: SessionDB, route: SeaRouteDB):
+
+        await self.send_bunekring_request_with_quote(session, route)
+
         route.status = "finished"
         route_new, err = await self.sql_db_service.update_route(route)
         if err:
@@ -212,7 +199,7 @@ class NewRouteHandler:
         name = intent_dict.get("name", user.company_name)
 
         if not name:
-            err_messages.append(f"{emogye.CROSS_RED} Add the company name please!")
+            err_messages.append(f"{emoji.CROSS_RED} Add the company name please!")
 
         if len(err_messages) > 0:
             return await self.template_service.session_template(session, "\n".join(err_messages))
@@ -277,7 +264,6 @@ class NewRouteHandler:
             },
         ))
 
-
         #c1 = await self.template_service.supplier_prices_template(session, route, status=True)
 
         session, err = await self.navigation_handler.to_next_step(session)
@@ -340,13 +326,13 @@ class NewRouteHandler:
 
         user, err = await self.sql_db_service.get_user_by_id(session.user_id)
         if err:
-            err_messages.append(f"{emogye.CROSS_RED} Could not find your user record.")
+            err_messages.append(f"{emoji.CROSS_RED} Could not find your user record.")
 
         if not user.email:
-            err_messages.append(f"{emogye.CROSS_RED} Please add your email address.")
+            err_messages.append(f"{emoji.CROSS_RED} Please add your email address.")
 
         if user.email and not utils.is_valid_email(user.email):
-            err_messages.append(f"{emogye.CROSS_RED} The email address is invalid. Please try again.")
+            err_messages.append(f"{emoji.CROSS_RED} The email address is invalid. Please try again.")
 
         if len(err_messages) > 0:
             return await self.template_service.session_template(session,"\n".join(err_messages))
@@ -476,7 +462,7 @@ class NewRouteHandler:
     async def _confirm_vessel_name(self, session: SessionDB, route: SeaRouteDB, intent_dict: Dict) -> ResponsePayloadCollection:
         err_messages = []
         if not route.vessel_name:
-            err_messages.append(f"{emogye.CROSS_RED} Add the vessel name please!")
+            err_messages.append(f"{emoji.CROSS_RED} Add the vessel name please!")
 
         if len(err_messages) > 0:
             return await self.template_service.vessel_name_template(session, route, "\n".join(err_messages))
@@ -532,14 +518,14 @@ class NewRouteHandler:
         err_messages = []
 
         # if not route.imo_number:
-        #     err_messages.append(f"{emogye.CROSS_RED} Add the imo number please!")
+        #     err_messages.append(f"{emoji.CROSS_RED} Add the imo number please!")
 
         def is_valid_imo(imo: str) -> bool:
             return bool(re.fullmatch(r"\d{7}", imo))
 
         if route.imo_number:
             if not is_valid_imo(route.imo_number):
-                err_messages.append(f"{emogye.CROSS_RED}  Imo number is 7 digits value!")
+                err_messages.append(f"{emoji.CROSS_RED}  Imo number is 7 digits value!")
 
         if len(err_messages) > 0:
             return await self.template_service.vessel_imo_template(session, route, "\n".join(err_messages))
@@ -608,10 +594,10 @@ class NewRouteHandler:
 
         if session.current_step == RouteStepEnum.DEPARTURE_PORT_SUGGESTION.value:
             candidate = route.data.port_selection.departure_candidate
-            suggestions = route.data.port_selection.departure_suggestions
+            suggestions = route.data.port_selection.departure_suggestions or []
         elif session.current_step == RouteStepEnum.DESTINATION_PORT_SUGGESTION.value:
             candidate = route.data.port_selection.destination_candidate
-            suggestions = route.data.port_selection.destination_suggestions
+            suggestions = route.data.port_selection.destination_suggestions or []
 
 
         if intent['type'] == 'name':
@@ -774,25 +760,27 @@ class NewRouteHandler:
 
         if session.current_step == RouteStepEnum.DEPARTURE_PORT_SUGGESTION.value:
             candidate = route.data.port_selection.departure_candidate
+            nearby = route.data.port_selection.departure_suggestions
             port_type_name = "departure"
             port_id = route.departure_port_id
         elif session.current_step == RouteStepEnum.DESTINATION_PORT_SUGGESTION.value:
             candidate = route.data.port_selection.destination_candidate
+            nearby = route.data.port_selection.destination_suggestions
             port_type_name = "destination"
             port_id = route.destination_port_id
 
         if candidate is None and port_id is None:
-            return await self.template_service.port_suggestions_template(session, route, f"{emogye.CROSS_GRAY} Firstly select {port_type_name} port.")
+            return await self.template_service.port_suggestions_template(session, route, f"{emoji.CROSS_GRAY} Firstly select {port_type_name} port.")
 
         if session.current_step == RouteStepEnum.DEPARTURE_PORT_SUGGESTION.value:
             route.departure_port_id = candidate.id if candidate else None
             route.data.port_selection.departure_candidate = candidate
-            route.data.port_selection.departure_suggestions = nearby if nearby else None
+            route.data.port_selection.departure_suggestions = nearby
 
         elif session.current_step == RouteStepEnum.DESTINATION_PORT_SUGGESTION.value:
             route.destination_port_id = candidate.id if candidate else None
             route.data.port_selection.destination_candidate = candidate
-            route.data.port_selection.destination_suggestions = nearby if nearby else None
+            route.data.port_selection.destination_suggestions = nearby
 
         updated_route, err = await self.sql_db_service.update_route(route)
         if err:

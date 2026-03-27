@@ -1,9 +1,47 @@
 from datetime import datetime, timedelta, date
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Tuple
 
 from app.data.dto.main.SeaPort import SeaPortDB
 
 import re
+
+
+MONTHS = {
+    "jan": 1, "january": 1,
+    "feb": 2, "february": 2,
+    "mar": 3, "march": 3,
+    "apr": 4, "april": 4,
+    "may": 5,
+    "jun": 6, "june": 6,
+    "jul": 7, "july": 7,
+    "aug": 8, "august": 8,
+    "sep": 9, "september": 9,
+    "oct": 10, "october": 10,
+    "nov": 11, "november": 11,
+    "dec": 12, "december": 12,
+}
+
+
+DATE_PATTERNS = [
+
+    # 15-01-2025
+    re.compile(r"^(?P<day>\d{1,2})[-/\.](?P<month>\d{1,2})[-/\.](?P<year>\d{4})$"),
+
+    # 15 Jan 2025
+    re.compile(r"^(?P<day>\d{1,2})\s+(?P<month>[a-zA-Z]+)\s+(?P<year>\d{4})$"),
+
+    # Jan 15 2025
+    re.compile(r"^(?P<month>[a-zA-Z]+)\s+(?P<day>\d{1,2})\s+(?P<year>\d{4})$"),
+
+    # 15 Jan
+    re.compile(r"^(?P<day>\d{1,2})\s+(?P<month>[a-zA-Z]+)$"),
+
+    # Jan 15
+    re.compile(r"^(?P<month>[a-zA-Z]+)\s+(?P<day>\d{1,2})$"),
+]
+
+RANGE_SPLIT = re.compile(r"\s*-\s*")
+
 def is_valid_message(msg: str) -> bool:
     # 1. Max length 30
     if len(msg) > 300:
@@ -69,6 +107,19 @@ def resolve_port_by_index(suggestions: List[SeaPortDB], index: int) -> Optional[
     if 0 <= adjusted_index < len(suggestions):
         return suggestions[adjusted_index]
     return None
+
+def merge_ports(*lists):
+    out = {}
+    for lst in lists:
+        for p in lst:
+            out[p.locode] = p
+    return list(out.values())
+
+
+def apply_sizes(ports, updated_map):
+    for i, p in enumerate(ports):
+        if p.locode in updated_map:
+            ports[i] = updated_map[p.locode]
 
 
 def safe_attr(obj, attr, default=""):
@@ -174,3 +225,164 @@ def clean_phone_number(v: Optional[str]) -> Optional[str]:
     cleaned = re.sub(r"\D", "", v)
 
     return cleaned or None
+
+def parse_eta_date(message: str) -> datetime | None:
+
+    message = message.strip().lower()
+
+    today = datetime.today().date()
+
+    for pattern in DATE_PATTERNS:
+        match = pattern.match(message)
+
+        if not match:
+            continue
+
+        data = match.groupdict()
+
+        day = int(data["day"])
+
+        month = data["month"]
+
+        if month.isdigit():
+            month = int(month)
+        else:
+            month = MONTHS.get(month[:3])
+
+        if not month:
+            return None
+
+        year = data.get("year")
+
+        if year:
+            year = int(year)
+        else:
+            year = today.year
+
+        try:
+            parsed = datetime(year, month, day).date()
+        except ValueError:
+            return None
+
+        # auto-fix past date without year
+        if not data.get("year") and parsed < today:
+            parsed = datetime(year + 1, month, day).date()
+
+        return datetime.combine(parsed, datetime.min.time())
+
+    return None
+
+
+def parse_eta_range(message: str) -> Tuple[Optional[datetime], Optional[datetime], Optional[str]]:
+    # message = message.strip().lower()
+    #
+    # # -------- SPECIAL CASES --------
+    # # 15 - 21 March
+    # m = re.match(r"^(?P<d1>\d{1,2})\s*-\s*(?P<d2>\d{1,2})\s+(?P<month>[a-zA-Z]+)$", message)
+    # if m:
+    #     d1 = m.group("d1")
+    #     d2 = m.group("d2")
+    #     month = m.group("month")
+    #
+    #     eta_from = parse_eta_date(f"{d1} {month}")
+    #     eta_to = parse_eta_date(f"{d2} {month}")
+    #
+    #     if not eta_from or not eta_to:
+    #         return None, None, "Could not parse dates."
+    #
+    #     if eta_to <= eta_from:
+    #         return None, None, "Second date must be later."
+    #
+    #     return eta_from, eta_to, None
+    #
+    # # march 22 - 23
+    # m = re.match(r"^(?P<month>[a-zA-Z]+)\s+(?P<d1>\d{1,2})\s*-\s*(?P<d2>\d{1,2})$", message)
+    # if m:
+    #     d1 = m.group("d1")
+    #     d2 = m.group("d2")
+    #     month = m.group("month")
+    #
+    #     eta_from = parse_eta_date(f"{d1} {month}")
+    #     eta_to = parse_eta_date(f"{d2} {month}")
+    #
+    #     if not eta_from or not eta_to:
+    #         return None, None, "Could not parse dates."
+    #
+    #     if eta_to <= eta_from:
+    #         return None, None, "Second date must be later."
+    #
+    #     return eta_from, eta_to, None
+
+    message = message.strip().lower()
+
+    def build_dates(d1, m1, d2, m2=None):
+        m2 = m2 or m1
+        eta_from = parse_eta_date(f"{d1} {m1}")
+        eta_to = parse_eta_date(f"{d2} {m2}")
+
+        if not eta_from or not eta_to:
+            return None, None, "Could not parse dates."
+
+        if eta_to <= eta_from:
+            return None, None, "Second date must be later."
+
+        return eta_from, eta_to, None
+
+    # -------- SAME MONTH (15 - 21 March) --------
+    m = re.match(r"^(?P<d1>\d{1,2})\s*-\s*(?P<d2>\d{1,2})\s+(?P<m>[a-zA-Z]+)$", message)
+    if m:
+        return build_dates(m.group("d1"), m.group("m"), m.group("d2"))
+
+    # -------- SAME MONTH (March 15 - 21) --------
+    m = re.match(r"^(?P<m>[a-zA-Z]+)\s+(?P<d1>\d{1,2})\s*-\s*(?P<d2>\d{1,2})$", message)
+    if m:
+        return build_dates(m.group("d1"), m.group("m"), m.group("d2"))
+
+    # -------- TWO FULL DATES (March 20 - March 30) --------
+    m = re.match(r"^(?P<m1>[a-zA-Z]+)\s+(?P<d1>\d{1,2})\s*-\s*(?P<m2>[a-zA-Z]+)\s+(?P<d2>\d{1,2})$", message)
+    if m:
+        return build_dates(m.group("d1"), m.group("m1"), m.group("d2"), m.group("m2"))
+
+    # -------- MIXED (20 March - 30) --------
+    m = re.match(r"^(?P<d1>\d{1,2})\s+(?P<m>[a-zA-Z]+)\s*-\s*(?P<d2>\d{1,2})$", message)
+    if m:
+        return build_dates(m.group("d1"), m.group("m"), m.group("d2"))
+
+    # -------- MIXED (March 20 - 30) --------
+    m = re.match(r"^(?P<m>[a-zA-Z]+)\s+(?P<d1>\d{1,2})\s*-\s*(?P<d2>\d{1,2})$", message)
+    if m:
+        return build_dates(m.group("d1"), m.group("m"), m.group("d2"))
+
+    # -------- COMPACT (20 30 March) --------
+    m = re.match(r"^(?P<d1>\d{1,2})\s+(?P<d2>\d{1,2})\s+(?P<m>[a-zA-Z]+)$", message)
+    if m:
+        return build_dates(m.group("d1"), m.group("m"), m.group("d2"))
+
+    # -------- COMPACT (March 20 30) --------
+    m = re.match(r"^(?P<m>[a-zA-Z]+)\s+(?P<d1>\d{1,2})\s+(?P<d2>\d{1,2})$", message)
+    if m:
+        return build_dates(m.group("d1"), m.group("m"), m.group("d2"))
+
+    parts = RANGE_SPLIT.split(message)
+
+    if len(parts) != 2:
+        return None, None, "I need two dates."
+
+    eta_from = parse_eta_date(parts[0])
+    eta_to = parse_eta_date(parts[1])
+
+    if not eta_from or not eta_to:
+        return None, None, "One dt was not parsed"
+
+    if eta_to <= eta_from:
+        return None, None, "First date older than second."
+
+    return eta_from, eta_to, None
+
+
+def date_range(
+        dt_from: datetime.date,
+        dt_to: datetime.date,
+) -> List[datetime.date]:
+    days = (dt_to - dt_from).days
+    return [dt_from + timedelta(days=i) for i in range(days + 1)]

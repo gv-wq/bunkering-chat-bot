@@ -9,6 +9,8 @@ from app.services.utils.HttpClient import HTTPClient
 from urllib.parse import urlencode
 
 
+
+
 class SearouteApi:
     def __init__(self, base_url: str, secret_key: str):
         self.base_url = base_url  # https://api.searoutes.com/geocoding/v2

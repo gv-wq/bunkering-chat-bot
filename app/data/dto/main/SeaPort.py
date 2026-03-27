@@ -4,7 +4,7 @@ from typing import List, Optional, Tuple
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.data import emogye
+from app.data import emoji
 
 
 def locode_to_flag(locode: str) -> str:
@@ -195,7 +195,7 @@ class SeaPortDB(SeaPortBubble):
         )
 
     def format_port(self, status: bool | None = None, update_status: bool = False):
-        prefix = "" if not update_status else f"{emogye.PLAY} "
+        prefix = "" if not update_status else f"{emoji.PLAY} "
 
         if status is True:
             prefix += " <b> Departure port"
