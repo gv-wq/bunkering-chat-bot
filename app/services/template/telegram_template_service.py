@@ -4792,7 +4792,7 @@ class TemplateService:
             responses=[
                 ResponsePayload(
                     text="\n".join(lines),
-                    keyboard=self.navigation_handler.get_show_route_navigation_keyboard(),
+                    keyboard=self.navigation_handler.quote_show_keyboard(),
                     files=[file] if file else []
                 )
             ]

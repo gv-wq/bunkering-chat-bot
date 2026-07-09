@@ -139,10 +139,10 @@ async def main():
        run_whatsapp(whatsapp_service)
     )
 
-
-# os.environ["ALL_PROXY"] = "socks5h://127.0.0.1:1082"
-# os.environ["HTTP_PROXY"] = "socks5h://127.0.0.1:1082"
-# os.environ["HTTPS_PROXY"] = "socks5h://127.0.0.1:1082"
+#if require("APP_MODE") == "development":
+    #os.environ["ALL_PROXY"] = "socks5h://172.19.0.1:10808"
+    #os.environ["HTTP_PROXY"] = "socks5h://172.19.0.1:10808"
+    #os.environ["HTTPS_PROXY"] = "socks5h://172.19.0.1:10808"
 
 if __name__ == "__main__":
     asyncio.run(main())

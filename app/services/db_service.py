@@ -30,7 +30,7 @@ from app.data.dto.searoute.SearoutePort import SearoutePort
 from app.data.dto.main.PortGroup import PortGroupDB
 from app.services.utils import utils
 
-KM_PER_DEG_LAT = 111.32  # approximate km per degree latitude
+KM_PER_DEG_LAT = 111.32  # approximate km per degree latitude``
 
 
 
@@ -113,13 +113,14 @@ class DbService:
                         is_active,
                         message_count,
                         route_count,
-                        promocode
+                        promocode,
+                        channel_primary
                     )
                     VALUES (
                         $1,$2,$3,
                         $4,$5,$6,$7,$8,
                         $9,$10,$11,$12,
-                        $13,$14,$15,$16,$17,$18,$19
+                        $13,$14,$15,$16,$17,$18,$19,$20
                     )
                     RETURNING *
                     """,
@@ -144,7 +145,8 @@ class DbService:
                     True,
                     0,
                     0,
-                    data.get("promocode")
+                    data.get("promocode"),
+                    data.get("channel_primary")
                 )
 
                 return UserDB.from_db_row(row), None
@@ -188,7 +190,7 @@ class DbService:
 
             async with self.connection_pool.acquire() as conn:
                 row = await conn.fetchrow(
-                    "SELECT * FROM users WHERE phone_number = $1",
+                    "SELECT * FROM users WHERE whatsapp_phone = $1",
                     normalized_phone
                 )
 
@@ -1483,8 +1485,8 @@ created_at DESC
                     WHERE 
                     locode = $1
                     AND fuel_name = $2
-                    AND price_date = $3 
-                    
+                    AND price_date = $3
+                    ORDER BY created_at DESC         
                     """,
                     locode,
                     fuel_name,
@@ -1507,7 +1509,8 @@ created_at DESC
                     WHERE 
                     mabux_id = $1
                     AND fuel_name = $2
-                    AND price_date = $3                  
+                    AND price_date = $3
+                    ORDER BY created_at DESC                       
                     """,
                     mabux_id,
                     fuel_name,
@@ -2786,7 +2789,7 @@ SELECT * FROM inserted;
                     error.position,
                     error.error_type,
                     error.message,
-                    error.traceback,
+                    json.dumps(error.traceback),
                     error.timestamp
                 ), None
         except Exception as ex:

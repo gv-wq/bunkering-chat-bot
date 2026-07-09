@@ -88,9 +88,9 @@ class AiService:
     def __init__(self, navigation_handler: NavigationHandler, sql_db_service: DbService):
         api_key = os.getenv("OPENAI_API_KEY")
         logging.info(f"-------------------------- OpenAI API Key: {api_key}")
-        if os.getenv("APP_MODE") == "development":
+        if False:#os.getenv("APP_MODE") == "development":
             http_client = httpx.Client(
-                proxy="socks5h://127.0.0.1:1082",
+                proxy="socks5h://172.19.0.1:10808",
                 trust_env=False,
                 timeout=60.0,
             )
@@ -1859,7 +1859,7 @@ class AiService:
             return None
 
         # only letters, spaces, hyphens
-        if not re.fullmatch(r"[A-Za-z\s\-]+", name):
+        if not re.fullmatch(r"[\w\s\-\.,&'()/+]+", name, re.UNICODE):
             return None
 
         # forbidden words check

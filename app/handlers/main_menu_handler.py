@@ -605,7 +605,7 @@ class MainMenuHandler:
         # -------- SAVE --------
         _, err = await self.sql_db_service.update_user(
             str(session.user_id),
-            {"phone_number": phone}
+            {"entered_phone_number": phone}
         )
         if err:
             return await self.template_service.start_phone_number_template(

@@ -40,11 +40,12 @@ class NavigationHandler:
                 #RouteStepEnum.ROUTE_BUILD_REQUEST.value,
                 RouteStepEnum.ROUTE_PORT_LIST.value,
                 RouteStepEnum.BUNKERING_QUEUE.value,
+                RouteStepEnum.SUPPLIER_PRICES.value,
                 RouteStepEnum.PDF_REQUEST.value,
                 RouteStepEnum.VESSEL_NAME.value,
                 RouteStepEnum.VESSEL_IMO.value,
                 RouteStepEnum.USER_EMAIL.value,
-                #RouteStepEnum.SUPPLIER_PRICES.value,
+
                 RouteStepEnum.COMPANY_NAME.value
 
 
@@ -361,6 +362,14 @@ class NavigationHandler:
         return InlineKeyboardMarkup([[
             InlineKeyboardButton(f"+", callback_data="+"),
             InlineKeyboardButton(f"-", callback_data="-"),
+            InlineKeyboardButton(f"{emoji.HOME} Menu", callback_data="menu"),
+            InlineKeyboardButton(f"{emoji.DOC} Supplier quote", callback_data="get_supplier_quote"),
+        ]])
+
+    def quote_show_keyboard(self) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup([[
+            InlineKeyboardButton("🗑️ Remove", callback_data="remove"),
+            InlineKeyboardButton("⬅ Back", callback_data="back"),
             InlineKeyboardButton(f"{emoji.HOME} Menu", callback_data="menu"),
             InlineKeyboardButton(f"{emoji.DOC} Supplier quote", callback_data="get_supplier_quote"),
         ]])

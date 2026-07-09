@@ -18,9 +18,10 @@ class User(BaseModel):
     whatsapp_profile_pic_url: Optional[str] = None
 
     phone_number: Optional[str] = Field(None, max_length=50, description="Phone number")
-
+    entered_phone_number: Optional[str] = Field(None, max_length=50, description="Entered phone number at the registration step")
     first_name: Optional[str] = Field(None, max_length=255, description="First name")
     last_name: Optional[str] = Field(None, max_length=255, description="Last name")
+    #entered_name: Optional[str] = Field(None, max_length=100, description="Entered name")
     email: Optional[str] = Field(None, description="Email address")
     registration_date: Optional[datetime] = Field(None, description="Registration date")
     current_tariff_id: Optional[UUID] = Field(None, description="Current tariff ID")
@@ -61,8 +62,9 @@ class UserDB(User):
             whatsapp_name=row.get("whatsapp_name"),
             whatsapp_profile_pic_url=row.get("whatsapp_profile_pic_url"),
 
-
             phone_number=row["phone_number"],
+            entered_phone_number=row["entered_phone_number"],
+
             first_name=row["first_name"],
             last_name=row["last_name"],
             email=row["email"],

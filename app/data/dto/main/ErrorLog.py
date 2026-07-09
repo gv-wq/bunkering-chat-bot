@@ -14,15 +14,27 @@ class ErrorLog(BaseModel):
     error_type: str
     message: str
     traceback: Dict[str, Any]
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(None))
+
 
 
 
 class ErrorLogFactory:
 
     @staticmethod
-    def from_exception(ex : Exception, position: str = None) -> ErrorLog:
+    def from_exception(ex: Exception, position: str = None) -> ErrorLog:
         tb_list = traceback.extract_tb(ex.__traceback__)
+
+        frames = [
+            {
+                "file": f.filename,
+                "line": f.lineno,
+                "function": f.name,
+                "code": f.line or "",
+            }
+            for f in tb_list
+        ]
+
         last_frame = tb_list[-1] if tb_list else None
 
         return ErrorLog(
@@ -33,14 +45,6 @@ class ErrorLogFactory:
             error_type=type(ex).__name__,
             message=str(ex),
             traceback={
-                "frames": [
-                    {
-                        "file": f.filename,
-                        "line": f.lineno,
-                        "function": f.name,
-                        "code": f.line,
-                    }
-                    for f in tb_list
-                ]
+                "frames": frames
             }
         )

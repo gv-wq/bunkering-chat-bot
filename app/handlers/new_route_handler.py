@@ -639,7 +639,7 @@ class NewRouteHandler:
             ))
 
             if searoute_err:
-                await self.sql_db_service.create_event(Event.searoute_error(
+                await self.sql_db_service.create_event(Event.searoute_nearest_error(
                     user_id=session.user_id,
                     payload={
                         "locode": candidate.locode,

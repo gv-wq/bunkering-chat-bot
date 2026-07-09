@@ -547,9 +547,9 @@ class WhatsApp360DialogService:
         except Exception as ex:
             error = ErrorLogFactory.from_exception(ex=ex, position="whatsapp_handler")
             r, err = await self.sql_db.log_error(error)
-            logger.log(ex)
-            logger.log(error)
-            logger.log(r)
+            logger.info(ex)
+            logger.info(error)
+            logger.info(r)
             if err:
                 logger.log(err)
             await self._send_text(event["wa_id"], "The error just happened. Admins are already noticed, dont worry.")

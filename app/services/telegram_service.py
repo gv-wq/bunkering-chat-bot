@@ -32,6 +32,9 @@ from app.services.core_service import CoreService
 from app.services.ai_service import AiService
 from app.services.db_service import DbService
 
+import logging
+logger = logging.getLogger(__name__)
+
 class TelegramService:
     def __init__(self, core_service: CoreService, ai_service: AiService, token: str, sql_db: DbService):
         self.core_service = core_service
@@ -104,7 +107,7 @@ class TelegramService:
         )
 
     async def handle_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        query = update.callback_data
+        query = update.callback_query
         await query.answer()
 
         await self.handle_message(update=update, context=context, override_text=query.data)
@@ -228,7 +231,7 @@ class TelegramService:
         except Exception as ex:
             error = ErrorLogFactory.from_exception(ex=ex, position="telegram_handler")
             r, err = await self.sql_db.log_error(error)
-            logger.log(r)
+            logger.info(r)
             if err:
                 logger.log(err)
             await message.reply_text("The error just happened. Admins are already noticed, dont worry.", parse_mode="HTML")

@@ -172,8 +172,10 @@ class CoreService:
                     update_fields["whatsapp_name"] = msg.meta.get("whatsapp_name")
 
                 # If this is a WhatsApp user but phone matches telegram user's phone
-                if msg.user_id and msg.user_id.replace("+", "") == user.phone_number.replace("+", "") and not user.whatsapp_phone:
-                    update_fields["whatsapp_phone"] = msg.user_id
+                if msg.user_id and user.phone_number and user.whatsapp_phone:
+
+                    if msg.user_id and msg.user_id.replace("+", "") == user.phone_number.replace("+", "") and not user.whatsapp_phone:
+                        update_fields["whatsapp_phone"] = msg.user_id
 
             if update_fields:
                 user, err = await self.sql_db_service.update_user(str(user.id), update_fields)
@@ -192,18 +194,21 @@ class CoreService:
                 "phone_number": msg.meta.get("phone_number"),
                 "first_name": msg.meta.get("first_name"),
                 "last_name": msg.meta.get("last_name"),
+                "channel_primary": "telegram"
             }
             new_user, err = await self.sql_db_service.create_user(d)
             await self._notify_admin_new_user(new_user,"Telegram")
 
         elif msg.source == "whatsapp":
             d = {
-                "phone_number": msg.user_id,
+                "whatsapp_phone": msg.user_id,
                 "whatsapp_effective_chat": msg.chat_id,
                 "first_name": msg.meta.get("whatsapp_name"),
+                "channel_primary": "whatsapp"
             }
             new_user, err = await self.sql_db_service.create_user(d)
             if not new_user or err:
+                logger.error(err)
                 return None, "Could not create user"
 
             await self._notify_admin_new_user(new_user, "WhatsApp")
